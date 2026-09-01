@@ -955,6 +955,9 @@ const state = {
     pendingPaletteImmediate: false,
     pendingPaletteReady: false,
     audioReadyForPalette: true,
+    playbackAttemptId: 0,
+    playbackFailureHandledAttemptId: null,
+    playbackRequested: false,
     currentGradient: '',
     isMobileInlineLyricsOpen: false,
     selectedSearchResults: new Set(),
@@ -3476,8 +3479,18 @@ function setupInteractions() {
     dom.playPauseBtn.addEventListener("click", togglePlayPause);
     dom.audioPlayer.addEventListener("timeupdate", handleTimeUpdate);
     dom.audioPlayer.addEventListener("loadedmetadata", handleLoadedMetadata);
-    dom.audioPlayer.addEventListener("play", updatePlayPauseButton);
-    dom.audioPlayer.addEventListener("pause", updatePlayPauseButton);
+    dom.audioPlayer.addEventListener("play", () => {
+        state.playbackRequested = true;
+        updatePlayPauseButton();
+    });
+    dom.audioPlayer.addEventListener("pause", () => {
+        // 媒体错误可能先触发 pause，保留标记让 error 事件继续自动跳歌。
+        if (!dom.audioPlayer.error) {
+            state.playbackRequested = false;
+        }
+        updatePlayPauseButton();
+    });
+    dom.audioPlayer.addEventListener("error", handleAudioPlaybackError);
     dom.audioPlayer.addEventListener("volumechange", onAudioVolumeChange);
 
     dom.progressBar.addEventListener("input", handleProgressInput);
@@ -5546,6 +5559,159 @@ function updatePlaylistHighlight() {
     });
 }
 
+function getActivePlaybackQueue() {
+    if (state.currentList === "favorite") {
+        return {
+            kind: "favorite",
+            songs: ensureFavoriteSongsArray(),
+            currentIndex: state.currentFavoriteIndex,
+            mode: state.favoritePlayMode || "list",
+        };
+    }
+
+    if (state.currentPlaylist === "online") {
+        return {
+            kind: "online",
+            songs: Array.isArray(state.onlineSongs) ? state.onlineSongs : [],
+            currentIndex: state.currentTrackIndex,
+            mode: state.playMode || "list",
+        };
+    }
+
+    if (state.currentPlaylist === "search") {
+        return {
+            kind: "search",
+            songs: Array.isArray(state.searchResults) ? state.searchResults : [],
+            currentIndex: state.currentTrackIndex,
+            mode: state.playMode || "list",
+        };
+    }
+
+    return {
+        kind: "playlist",
+        songs: Array.isArray(state.playlistSongs) ? state.playlistSongs : [],
+        currentIndex: state.currentTrackIndex,
+        mode: state.playMode || "list",
+    };
+}
+
+function getNextIndexAfterPlaybackFailure(queue) {
+    if (!queue || queue.songs.length < 2) {
+        return -1;
+    }
+
+    const currentIndex = Number.isInteger(queue.currentIndex) ? queue.currentIndex : -1;
+    if (queue.mode === "random") {
+        const randomIndex = Math.floor(Math.random() * queue.songs.length);
+        return randomIndex === currentIndex
+            ? (randomIndex + 1) % queue.songs.length
+            : randomIndex;
+    }
+
+    return (currentIndex + 1 + queue.songs.length) % queue.songs.length;
+}
+
+async function skipFailedTrack(song, error, attemptId) {
+    if (state.currentSong !== song || state.playbackAttemptId !== attemptId) {
+        return false;
+    }
+    if (state.playbackFailureHandledAttemptId === attemptId) {
+        return false;
+    }
+
+    state.playbackFailureHandledAttemptId = attemptId;
+    const queue = getActivePlaybackQueue();
+    const nextIndex = getNextIndexAfterPlaybackFailure(queue);
+    if (nextIndex < 0) {
+        return false;
+    }
+
+    const nextSong = queue.songs[nextIndex];
+    if (!nextSong) {
+        return false;
+    }
+
+    const reason = error?.message ? ` (${error.message})` : "";
+    debugLog(`歌曲无法播放，自动跳过: ${song.name || "未知歌曲"}${reason}`);
+
+    let targetIndex = nextIndex;
+    if (queue.kind === "favorite") {
+        state.currentFavoriteIndex = nextIndex;
+        state.currentList = "favorite";
+        state.currentPlaylist = "favorites";
+        saveFavoriteState();
+    } else if (queue.kind === "playlist") {
+        targetIndex = nextIndex;
+        state.currentTrackIndex = targetIndex;
+        state.currentPlaylist = "playlist";
+        state.currentList = "playlist";
+        renderPlaylist();
+    } else {
+        const existingIndex = state.playlistSongs.findIndex(
+            (playlistSong) => getSongKey(playlistSong) === getSongKey(nextSong)
+        );
+
+        if (existingIndex >= 0) {
+            targetIndex = existingIndex;
+        } else {
+            state.playlistSongs.push(nextSong);
+            targetIndex = state.playlistSongs.length - 1;
+        }
+
+        state.currentTrackIndex = targetIndex;
+        state.currentPlaylist = "playlist";
+        state.currentList = "playlist";
+        renderPlaylist();
+    }
+
+    const nextAttemptId = ++state.playbackAttemptId;
+    await playSong(nextSong, {
+        autoplay: true,
+        playbackAttemptId: nextAttemptId,
+    });
+
+    if (queue.kind === "favorite") {
+        updateFavoriteHighlight();
+        updatePlayModeUI();
+    } else {
+        updatePlaylistHighlight();
+        updatePlayModeUI();
+    }
+    return true;
+}
+
+function shouldSkipPlaybackFailure(error) {
+    // 浏览器阻止自动播放时，跳过歌曲会错误地清空整个队列。
+    return error?.name !== "NotAllowedError";
+}
+
+function handleAudioPlaybackError() {
+    const player = dom.audioPlayer;
+    const song = state.currentSong;
+    if (!song || !state.currentAudioUrl || !state.playbackRequested) {
+        return;
+    }
+
+    const activeSource = player.currentSrc || player.src;
+    if (activeSource && activeSource !== state.currentAudioUrl) {
+        return;
+    }
+
+    const attemptId = state.playbackAttemptId;
+    skipFailedTrack(song, new Error("音频播放失败"), attemptId)
+        .then((skipped) => {
+            if (!skipped && state.currentSong === song && state.playbackAttemptId === attemptId) {
+                showNotification("播放失败，请检查网络连接", "error");
+            }
+        })
+        .catch((error) => {
+            console.error("自动跳过歌曲失败:", error);
+            if (state.currentSong === song && state.playbackAttemptId === attemptId) {
+                showNotification("播放失败，请检查网络连接", "error");
+            }
+        });
+}
+
 // 修复：播放歌曲函数 - 支持统一播放列表
 function waitForAudioReady(player) {
     if (!player) return Promise.resolve();
@@ -5571,7 +5737,13 @@ function waitForAudioReady(player) {
 }
 
 async function playSong(song, options = {}) {
-    const { autoplay = true, startTime = 0, preserveProgress = false, isRetry = false } = options;
+    const {
+        autoplay = true,
+        startTime = 0,
+        preserveProgress = false,
+        isRetry = false,
+        playbackAttemptId = ++state.playbackAttemptId,
+    } = options;
 
     window.clearTimeout(pendingPaletteTimer);
     state.audioReadyForPalette = false;
@@ -5582,6 +5754,7 @@ async function playSong(song, options = {}) {
 
     try {
         updateCurrentSongInfo(song, { loadArtwork: false });
+        state.currentAudioUrl = null;
 
         const quality = state.playbackQuality || '320';
         let audioUrl = API.getSongUrl(song, quality);
@@ -5612,7 +5785,6 @@ async function playSong(song, options = {}) {
         }
 
         state.currentSong = song;
-        state.currentAudioUrl = null;
 
         dom.audioPlayer.pause();
 
@@ -5671,6 +5843,7 @@ async function playSong(song, options = {}) {
         }
 
         state.currentAudioUrl = selectedAudioUrl;
+        state.playbackRequested = autoplay;
 
         if (state.pendingSeekTime != null) {
             setAudioCurrentTime(state.pendingSeekTime);
@@ -5686,19 +5859,7 @@ async function playSong(song, options = {}) {
         if (autoplay) {
             playPromise = dom.audioPlayer.play();
             if (playPromise !== undefined) {
-                playPromise.catch(async error => {
-                    console.error('播放失败:', error);
-                    if (!isRetry) {
-                        debugLog('音频播放遇到错误，尝试刷新缓存重试...');
-                        try {
-                            await playSong(song, { ...options, isRetry: true });
-                        } catch (retryError) {
-                            showNotification('播放失败，请检查网络连接', 'error');
-                        }
-                    } else {
-                        showNotification('播放失败，请检查网络连接', 'error');
-                    }
-                });
+                await playPromise;
             } else {
                 playPromise = null;
             }
@@ -5716,9 +5877,22 @@ async function playSong(song, options = {}) {
         }
     } catch (error) {
         console.error('播放歌曲失败:', error);
+        if (state.currentSong !== song || state.playbackAttemptId !== playbackAttemptId) {
+            return;
+        }
         if (!isRetry) {
             debugLog('播放歌曲失败，尝试刷新缓存重试...', error);
-            return playSong(song, { ...options, isRetry: true });
+            return playSong(song, {
+                ...options,
+                isRetry: true,
+                playbackAttemptId,
+            });
+        }
+        if (autoplay && shouldSkipPlaybackFailure(error)) {
+            const skipped = await skipFailedTrack(song, error, playbackAttemptId);
+            if (skipped) {
+                return;
+            }
         }
         throw error;
     } finally {
