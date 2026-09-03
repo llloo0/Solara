@@ -3797,7 +3797,9 @@ function setupInteractions() {
         const searchArea = document.querySelector(".search-area");
         const mobileSearchOpen = isMobileView &&
             document.body?.classList.contains("mobile-search-open");
-        if (mobileSearchOpen) {
+        const searchToggleClicked = dom.searchExpandBtn &&
+            dom.searchExpandBtn.contains(e.target);
+        if (mobileSearchOpen || searchToggleClicked) {
             return;
         }
         if (searchArea && !searchArea.contains(e.target) &&
