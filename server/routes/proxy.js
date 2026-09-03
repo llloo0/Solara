@@ -125,6 +125,9 @@ async function proxyApiRequest(reqUrl, req, res) {
         headers: {
           'User-Agent': req.headers['user-agent'] || 'Mozilla/5.0',
           'Accept': 'application/json',
+          'Referer': 'https://music.gdstudio.xyz/',
+          'Origin': 'https://music.gdstudio.xyz',
+          'X-Requested-With': 'XMLHttpRequest',
         },
       });
       responseText = await upstream.text();
@@ -150,6 +153,9 @@ async function proxyApiRequest(reqUrl, req, res) {
         headers: {
           'User-Agent': req.headers['user-agent'] || 'Mozilla/5.0',
           'Accept': 'application/json',
+          'Referer': 'https://music.gdstudio.xyz/',
+          'Origin': 'https://music.gdstudio.xyz',
+          'X-Requested-With': 'XMLHttpRequest',
         },
       });
       responseText = await upstream.text();
@@ -163,9 +169,19 @@ async function proxyApiRequest(reqUrl, req, res) {
   // ── 判断是否缓存（与 Cloudflare 版本逻辑完全一致） ──────────────────────────
   const isSearch = parsedReq.searchParams.get('types') === 'search';
   const isEmptyResult = responseText.trim() === '[]';
-  const isError = responseText.includes('"error"') || responseText.includes('"status":0');
+  let parsedResponse = null;
+  try {
+    parsedResponse = JSON.parse(responseText);
+  } catch {
+    // 非 JSON 响应不会进入缓存。
+  }
+  const isEmptyAudioUrl = parsedReq.searchParams.get('types') === 'url' &&
+    (!parsedResponse || typeof parsedResponse.url !== 'string' || parsedResponse.url.trim() === '');
+  const isError = !parsedResponse ||
+    responseText.includes('"error"') ||
+    responseText.includes('"status":0');
 
-  let shouldCache = upstream.status === 200 && !isError && !bypassCache;
+  let shouldCache = upstream.status === 200 && !isError && !isEmptyAudioUrl && !bypassCache;
   if (isSearch && isEmptyResult) shouldCache = false;
 
   if (shouldCache) {

@@ -767,11 +767,20 @@ const API = {
         return Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15);
     },
 
-    fetchJson: async (url) => {
+    fetchJson: async (url, options = {}) => {
+        const timeoutMs = Number.isFinite(options.timeoutMs) ? options.timeoutMs : 15000;
+        const { timeoutMs: _ignoredTimeoutMs, ...requestOptions } = options;
+        const controller = typeof AbortController === "function" ? new AbortController() : null;
+        const timeoutId = controller
+            ? window.setTimeout(() => controller.abort(), timeoutMs)
+            : null;
         try {
             const response = await fetch(url, {
+                ...requestOptions,
+                signal: controller ? controller.signal : requestOptions.signal,
                 headers: {
                     "Accept": "application/json",
+                    ...(requestOptions.headers || {}),
                 },
             });
 
@@ -794,12 +803,19 @@ const API = {
             try {
                 return JSON.parse(text);
             } catch (parseError) {
-                console.warn("JSON parse failed, returning raw text", parseError);
-                return text;
+                console.warn("JSON parse failed", parseError);
+                throw new Error("接口返回了无法解析的数据");
             }
         } catch (error) {
+            if (error?.name === "AbortError") {
+                throw new Error("接口请求超时");
+            }
             console.error("API request error:", error);
             throw error;
+        } finally {
+            if (timeoutId !== null) {
+                window.clearTimeout(timeoutId);
+            }
         }
     },
 
@@ -814,16 +830,24 @@ const API = {
 
             if (!Array.isArray(data)) throw new Error("搜索结果格式错误");
 
-            return data.map(song => ({
-                id: song.id,
-                name: song.name,
-                artist: song.artist,
-                album: song.album,
-                pic_id: song.pic_id,
-                url_id: song.url_id,
-                lyric_id: song.lyric_id,
-                source: song.source,
-            }));
+            return data.map(song => {
+                if (!song || typeof song !== "object") {
+                    return null;
+                }
+                const lookupId = song?.url_id ?? song?.id;
+                const normalizedSource = normalizeSource(song?.source || source);
+                return {
+                    id: lookupId == null ? "" : String(lookupId),
+                    name: typeof song.name === "string" ? song.name.trim() : "",
+                    artist: song.artist,
+                    album: song.album,
+                    pic_id: song.pic_id,
+                    url_id: lookupId == null ? "" : String(lookupId),
+                    lyric_id: song.lyric_id,
+                    source: normalizedSource,
+                    from: song.from,
+                };
+            }).filter(song => song.id && song.name);
         } catch (error) {
             debugLog(`API错误: ${error.message}`);
             throw error;
@@ -832,17 +856,22 @@ const API = {
 
     getSongUrl: (song, quality = "320") => {
         const signature = API.generateSignature();
-        return `${API.baseUrl}?types=url&id=${song.id}&source=${song.source || "netease"}&br=${quality}&s=${signature}`;
+        const id = song?.url_id || song?.id;
+        const source = normalizeSource(song?.source);
+        return `${API.baseUrl}?types=url&id=${encodeURIComponent(id || "")}&source=${source}&br=${quality}&s=${signature}`;
     },
 
     getLyric: (song) => {
         const signature = API.generateSignature();
-        return `${API.baseUrl}?types=lyric&id=${song.lyric_id || song.id}&source=${song.source || "netease"}&s=${signature}`;
+        const id = song?.lyric_id || song?.id;
+        const source = normalizeSource(song?.source);
+        return `${API.baseUrl}?types=lyric&id=${encodeURIComponent(id || "")}&source=${source}&s=${signature}`;
     },
 
     getPicUrl: (song) => {
         const signature = API.generateSignature();
-        return `${API.baseUrl}?types=pic&id=${song.pic_id}&source=${song.source || "netease"}&size=300&s=${signature}`;
+        const source = normalizeSource(song?.source);
+        return `${API.baseUrl}?types=pic&id=${encodeURIComponent(song?.pic_id || "")}&source=${source}&size=300&s=${signature}`;
     }
 };
 
@@ -3195,16 +3224,44 @@ async function reloadCurrentSong(options = {}) {
 
 async function restoreCurrentSongState() {
     if (!state.currentSong) return;
+    const restoringSong = state.currentSong;
     try {
-        await playSong(state.currentSong, {
+        await playSong(restoringSong, {
             autoplay: false,
             startTime: state.currentPlaybackTime,
             preserveProgress: true,
+            skipOnFailure: false,
         });
         dom.audioPlayer.pause();
         updatePlayPauseButton();
     } catch (error) {
-        console.warn("恢复音频失败:", error);
+        // 旧歌曲失效时清除当前播放状态，但保留用户的播放列表。
+        if (state.currentSong !== restoringSong) {
+            return;
+        }
+        console.warn("恢复音频失败，已清除失效的当前歌曲:", error);
+        dom.audioPlayer.pause();
+        dom.audioPlayer.removeAttribute("src");
+        dom.audioPlayer.load();
+        state.currentSong = null;
+        state.currentAudioUrl = null;
+        state.playbackRequested = false;
+        state.currentPlaybackTime = 0;
+        state.lastSavedPlaybackTime = 0;
+        safeRemoveLocalStorage("currentSong");
+        safeSetLocalStorage("currentPlaybackTime", "0");
+        if (dom.currentSongTitle) {
+            dom.currentSongTitle.textContent = "选择一首歌曲开始播放";
+        }
+        if (dom.currentSongArtist) {
+            dom.currentSongArtist.textContent = "未知艺术家";
+        }
+        if (typeof showAlbumCoverPlaceholder === "function") {
+            showAlbumCoverPlaceholder();
+        }
+        clearLyricsContent();
+        updateFavoriteIcons();
+        updatePlayPauseButton();
     }
 }
 
@@ -5712,11 +5769,13 @@ function handleAudioPlaybackError() {
 // 修复：播放歌曲函数 - 支持统一播放列表
 function waitForAudioReady(player) {
     if (!player) return Promise.resolve();
-    if (player.readyState >= 1) {
-        return Promise.resolve();
-    }
     return new Promise((resolve, reject) => {
+        const timeoutId = window.setTimeout(() => {
+            cleanup();
+            reject(new Error("音频加载超时"));
+        }, 12000);
         const cleanup = () => {
+            window.clearTimeout(timeoutId);
             player.removeEventListener('loadedmetadata', onLoaded);
             player.removeEventListener('error', onError);
         };
@@ -5756,7 +5815,10 @@ async function playSong(song, options = {}) {
 
     try {
         updateCurrentSongInfo(song, { loadArtwork: false });
+        // 先锁定当前歌曲，音频地址接口失败时也能走统一的自动跳过流程。
+        state.currentSong = song;
         state.currentAudioUrl = null;
+        state.playbackRequested = false;
 
         const quality = state.playbackQuality || '320';
         let audioUrl = API.getSongUrl(song, quality);
@@ -5765,7 +5827,7 @@ async function playSong(song, options = {}) {
         }
         debugLog(`获取音频URL: ${audioUrl}`);
 
-        const audioData = await API.fetchJson(audioUrl);
+        const audioData = await API.fetchJson(audioUrl, { timeoutMs: 15000 });
 
         if (!audioData || !audioData.url) {
             throw new Error('无法获取音频播放地址');
@@ -5818,10 +5880,10 @@ async function playSong(song, options = {}) {
 
         for (const candidateUrl of candidateAudioUrls) {
             dom.audioPlayer.src = candidateUrl;
+            const audioReadyPromise = waitForAudioReady(dom.audioPlayer);
             dom.audioPlayer.load();
-
             try {
-                await waitForAudioReady(dom.audioPlayer);
+                await audioReadyPromise;
                 selectedAudioUrl = candidateUrl;
                 usedFallbackAudio = candidateUrl !== primaryAudioUrl && candidateAudioUrls.length > 1;
                 break;

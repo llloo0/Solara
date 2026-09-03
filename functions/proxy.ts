@@ -131,6 +131,9 @@ async function proxyApiRequest(url: URL, request: Request, waitUntil?: (promise:
     headers: {
       "User-Agent": request.headers.get("User-Agent") ?? "Mozilla/5.0",
       "Accept": "application/json",
+      "Referer": "https://music.gdstudio.xyz/",
+      "Origin": "https://music.gdstudio.xyz",
+      "X-Requested-With": "XMLHttpRequest",
     },
   });
 
@@ -146,9 +149,23 @@ async function proxyApiRequest(url: URL, request: Request, waitUntil?: (promise:
   // 判断是否应该缓存：必须是 200 状态，且内容不能是空数组或包含错误标识，且未指定强制刷新
   const isSearch = url.searchParams.get("types") === "search";
   const isEmptyResult = responseText.trim() === "[]";
-  const isError = responseText.includes('"error"') || responseText.includes('"status":0');
+  let parsedResponse: any = null;
+  try {
+    parsedResponse = JSON.parse(responseText);
+  } catch {
+    // 非 JSON 响应不会进入缓存。
+  }
+  const isEmptyAudioUrl = url.searchParams.get("types") === "url" &&
+    (!parsedResponse || typeof parsedResponse.url !== "string" || parsedResponse.url.trim() === "");
+  const isError = !parsedResponse ||
+    responseText.includes('"error"') ||
+    responseText.includes('"status":0');
   
-  let shouldCache = upstream.status === 200 && request.method === "GET" && !isError && !bypassCache;
+  let shouldCache = upstream.status === 200 &&
+    request.method === "GET" &&
+    !isError &&
+    !isEmptyAudioUrl &&
+    !bypassCache;
   
   // 如果是搜索请求且结果为空，通常是 API 繁忙或异常，不建议长缓存
   if (isSearch && isEmptyResult) {
