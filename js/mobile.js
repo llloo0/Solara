@@ -134,7 +134,7 @@
         const initialView = "playlist";
         document.body.setAttribute("data-mobile-panel-view", initialView);
         if (dom.mobilePanelTitle) {
-            dom.mobilePanelTitle.textContent = "播放列表";
+            dom.mobilePanelTitle.textContent = "播放队列";
         }
         if (dom.lyrics) {
             dom.lyrics.classList.remove("active");

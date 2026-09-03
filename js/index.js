@@ -15,7 +15,6 @@ const dom = {
     mobileInlineLyricsContent: document.getElementById("mobileInlineLyricsContent"),
     audioPlayer: document.getElementById("audioPlayer"),
     themeToggleButton: document.getElementById("themeToggleButton"),
-    loadOnlineBtn: document.getElementById("loadOnlineBtn"),
     showPlaylistBtn: document.getElementById("showPlaylistBtn"),
     showLyricsBtn: document.getElementById("showLyricsBtn"),
     searchInput: document.getElementById("searchInput"),
@@ -63,7 +62,6 @@ const dom = {
     mobileExportFavoritesBtn: document.getElementById("mobileExportFavoritesBtn"),
     mobileClearFavoritesBtn: document.getElementById("mobileClearFavoritesBtn"),
     mobileOverlayScrim: document.getElementById("mobileOverlayScrim"),
-    mobileExploreButton: document.getElementById("mobileExploreButton"),
     mobileQualityToggle: document.getElementById("mobileQualityToggle"),
     mobileQualityLabel: document.getElementById("mobileQualityLabel"),
     mobilePanel: document.getElementById("mobilePanel"),
@@ -77,12 +75,6 @@ const dom = {
     importFavoritesInput: document.getElementById("importFavoritesInput"),
     clearFavoritesBtn: document.getElementById("clearFavoritesBtn"),
     currentFavoriteToggle: document.getElementById("currentFavoriteToggle"),
-    settingsModal: document.getElementById("settingsModal"),
-    closeSettingsBtn: document.getElementById("closeSettingsBtn"),
-    saveSettingsBtn: document.getElementById("saveSettingsBtn"),
-    openSettingsBtn: document.getElementById("openSettingsBtn"),
-    radarGenreList: document.getElementById("radarGenreList"),
-    logo: document.querySelector(".header h1"),
 };
 
 window.SolaraDom = dom;
@@ -373,7 +365,6 @@ const STORAGE_KEYS_TO_SYNC = new Set([
     "favoritePlaybackTime",
     "searchSource",
     "lastSearchState.v1",
-    "radarSettings",
 ]);
 
 function createPersistentStorageClient() {
@@ -839,59 +830,6 @@ const API = {
         }
     },
 
-    getRadarPlaylist: async (playlistId = "3778678", options = {}) => {
-        const signature = API.generateSignature();
-
-        let limit = 50;
-        let offset = 0;
-
-        if (typeof options === "number") {
-            limit = options;
-        } else if (options && typeof options === "object") {
-            if (Number.isFinite(options.limit)) {
-                limit = options.limit;
-            } else if (Number.isFinite(options.count)) {
-                limit = options.count;
-            }
-            if (Number.isFinite(options.offset)) {
-                offset = options.offset;
-            }
-        }
-
-        limit = Math.max(1, Math.min(200, Math.trunc(limit)) || 50);
-        offset = Math.max(0, Math.trunc(offset) || 0);
-
-        const params = new URLSearchParams({
-            types: "playlist",
-            id: playlistId,
-            limit: String(limit),
-            offset: String(offset),
-            s: signature,
-        });
-        const url = `${API.baseUrl}?${params.toString()}`;
-
-        try {
-            const data = await API.fetchJson(url);
-            const tracks = data && data.playlist && Array.isArray(data.playlist.tracks)
-                ? data.playlist.tracks.slice(0, limit)
-                : [];
-
-            if (tracks.length === 0) throw new Error("No tracks found");
-
-            return tracks.map(track => ({
-                id: track.id,
-                name: track.name,
-                artist: Array.isArray(track.ar) ? track.ar.map(artist => artist.name).join(" / ") : "",
-                source: "netease",
-                lyric_id: track.id,
-                pic_id: track.al?.pic_str || track.al?.pic || track.al?.picUrl || "",
-            }));
-        } catch (error) {
-            console.error("API request failed:", error);
-            throw error;
-        }
-    },
-
     getSongUrl: (song, quality = "320") => {
         const signature = API.generateSignature();
         return `${API.baseUrl}?types=url&id=${song.id}&source=${song.source || "netease"}&br=${quality}&s=${signature}`;
@@ -957,6 +895,7 @@ const state = {
     audioReadyForPalette: true,
     playbackAttemptId: 0,
     playbackFailureHandledAttemptId: null,
+    playbackFailureChain: new Set(),
     playbackRequested: false,
     currentGradient: '',
     isMobileInlineLyricsOpen: false,
@@ -1052,17 +991,6 @@ function applyPersistentSnapshotFromRemote(data) {
             state.playlistSongs = playlist;
             safeSetLocalStorage("playlistSongs", data.playlistSongs, { skipRemote: true });
             playlistUpdated = true;
-        }
-    }
-
-    if (typeof data.radarSettings === "string") {
-        const radarSettings = parseJSON(data.radarSettings, null);
-        if (radarSettings) {
-            state.radarSettings = radarSettings;
-            safeSetLocalStorage("radarSettings", data.radarSettings, { skipRemote: true });
-            if (typeof applySettingsToUI === "function") {
-                applySettingsToUI();
-            }
         }
     }
 
@@ -2381,6 +2309,30 @@ function hideSearchResults() {
     closeImportSelectedMenu();
 }
 
+function initializeInterfaceMotion() {
+    if (!window.gsap || window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches) {
+        return;
+    }
+
+    const introTargets = [
+        ".header",
+        ".search-area",
+        ".cover-area",
+        ".lyrics",
+        ".mobile-panel",
+        ".controls",
+    ].join(", ");
+
+    window.gsap.from(introTargets, {
+        duration: 0.7,
+        y: 14,
+        opacity: 0,
+        stagger: 0.06,
+        ease: "power2.out",
+        clearProps: "transform,opacity",
+    });
+}
+
 function createSearchStateSnapshot() {
     return {
         keyword: typeof state.searchKeyword === "string" ? state.searchKeyword : "",
@@ -3177,34 +3129,58 @@ async function selectPlaybackQuality(quality) {
         return;
     }
 
+    const previousQuality = state.playbackQuality;
+    const wasPlaying = state.currentSong && !dom.audioPlayer.paused;
     state.playbackQuality = normalized;
     updateQualityLabel();
     buildQualityMenu();
-    savePlayerState();
     closePlayerQualityMenu();
 
     const option = QUALITY_OPTIONS.find(item => item.value === normalized);
-    if (option) {
-        showNotification(`音质已切换为 ${option.label} (${option.description})`);
+    if (!state.currentSong) {
+        savePlayerState();
+        if (option) {
+            showNotification(`音质已切换为 ${option.label} (${option.description})`);
+        }
+        return;
     }
 
-    if (state.currentSong) {
-        const success = await reloadCurrentSong();
-        if (!success) {
-            showNotification("切换音质失败，请稍后重试", "error");
+    const success = await reloadCurrentSong({ skipOnFailure: false });
+    if (success) {
+        savePlayerState();
+        if (option) {
+            showNotification(`音质已切换为 ${option.label} (${option.description})`);
+        }
+        return;
+    }
+
+    state.playbackQuality = previousQuality;
+    updateQualityLabel();
+    buildQualityMenu();
+    showNotification("该歌曲不支持此音质，已保留原音质", "warning");
+
+    if (wasPlaying) {
+        try {
+            await reloadCurrentSong({ skipOnFailure: false, autoplayOverride: true });
+        } catch (error) {
+            console.warn("恢复原音质失败:", error);
         }
     }
 }
 
-async function reloadCurrentSong() {
+async function reloadCurrentSong(options = {}) {
     if (!state.currentSong) return true;
-    const wasPlaying = !dom.audioPlayer.paused;
+    const { skipOnFailure = false, autoplayOverride } = options;
+    const wasPlaying = typeof autoplayOverride === "boolean"
+        ? autoplayOverride
+        : !dom.audioPlayer.paused;
     const targetTime = dom.audioPlayer.currentTime || state.currentPlaybackTime || 0;
     try {
         await playSong(state.currentSong, {
             autoplay: wasPlaying,
             startTime: targetTime,
             preserveProgress: true,
+            skipOnFailure,
         });
         if (!wasPlaying) {
             dom.audioPlayer.pause();
@@ -3232,7 +3208,14 @@ async function restoreCurrentSongState() {
     }
 }
 
-window.addEventListener("load", setupInteractions);
+let interactionsInitialized = false;
+
+if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", setupInteractions, { once: true });
+} else {
+    setupInteractions();
+}
+
 // 仅在浏览器不支持 Media Session API 时监听 ended 事件，
 // 避免与媒体会话的结束回调重复触发自动播放。
 if (!("mediaSession" in navigator)) {
@@ -3240,6 +3223,11 @@ if (!("mediaSession" in navigator)) {
 }
 
 function setupInteractions() {
+    if (interactionsInitialized) {
+        return;
+    }
+    interactionsInitialized = true;
+
     function ensureQualityMenuPortal() {
         if (!dom.playerQualityMenu || !document.body || !isMobileView) {
             return;
@@ -3527,16 +3515,6 @@ function setupInteractions() {
                 return;
             }
             closeMobileInlineLyrics();
-        });
-    }
-
-    dom.loadOnlineBtn.addEventListener("click", exploreOnlineMusic);
-    if (dom.mobileExploreButton) {
-        dom.mobileExploreButton.addEventListener("click", (event) => {
-            event.preventDefault();
-            event.stopPropagation();
-            closeAllMobileOverlays();
-            exploreOnlineMusic();
         });
     }
 
@@ -3845,6 +3823,8 @@ function setupInteractions() {
         initializeMobileUI();
         updateMobileClearPlaylistVisibility();
     }
+
+    initializeInterfaceMotion();
 }
 
 // 修复：更新当前歌曲信息和封面
@@ -5595,23 +5575,37 @@ function getActivePlaybackQueue() {
     };
 }
 
-function getNextIndexAfterPlaybackFailure(queue) {
+function getPlaybackSongKey(song) {
+    return getSongKey(song) || `${song?.source || "unknown"}:${song?.id || song?.name || "unknown"}`;
+}
+
+function getNextIndexAfterPlaybackFailure(queue, failureChain = new Set()) {
     if (!queue || queue.songs.length < 2) {
         return -1;
     }
 
     const currentIndex = Number.isInteger(queue.currentIndex) ? queue.currentIndex : -1;
-    if (queue.mode === "random") {
-        const randomIndex = Math.floor(Math.random() * queue.songs.length);
-        return randomIndex === currentIndex
-            ? (randomIndex + 1) % queue.songs.length
-            : randomIndex;
+    const candidates = queue.songs
+        .map((song, index) => ({ song, index }))
+        .filter(({ song, index }) => index !== currentIndex && !failureChain.has(getPlaybackSongKey(song)));
+    if (candidates.length === 0) {
+        return -1;
     }
 
-    return (currentIndex + 1 + queue.songs.length) % queue.songs.length;
+    if (queue.mode === "random") {
+        return candidates[Math.floor(Math.random() * candidates.length)].index;
+    }
+
+    for (let offset = 1; offset <= queue.songs.length; offset += 1) {
+        const candidateIndex = (currentIndex + offset + queue.songs.length) % queue.songs.length;
+        if (candidates.some(({ index }) => index === candidateIndex)) {
+            return candidateIndex;
+        }
+    }
+    return candidates[0].index;
 }
 
-async function skipFailedTrack(song, error, attemptId) {
+async function skipFailedTrack(song, error, attemptId, failureChain = new Set()) {
     if (state.currentSong !== song || state.playbackAttemptId !== attemptId) {
         return false;
     }
@@ -5621,7 +5615,9 @@ async function skipFailedTrack(song, error, attemptId) {
 
     state.playbackFailureHandledAttemptId = attemptId;
     const queue = getActivePlaybackQueue();
-    const nextIndex = getNextIndexAfterPlaybackFailure(queue);
+    const chain = failureChain instanceof Set ? failureChain : new Set();
+    chain.add(getPlaybackSongKey(song));
+    const nextIndex = getNextIndexAfterPlaybackFailure(queue, chain);
     if (nextIndex < 0) {
         return false;
     }
@@ -5668,6 +5664,7 @@ async function skipFailedTrack(song, error, attemptId) {
     await playSong(nextSong, {
         autoplay: true,
         playbackAttemptId: nextAttemptId,
+        failureChain: chain,
     });
 
     if (queue.kind === "favorite") {
@@ -5698,7 +5695,7 @@ function handleAudioPlaybackError() {
     }
 
     const attemptId = state.playbackAttemptId;
-    skipFailedTrack(song, new Error("音频播放失败"), attemptId)
+    skipFailedTrack(song, new Error("音频播放失败"), attemptId, state.playbackFailureChain)
         .then((skipped) => {
             if (!skipped && state.currentSong === song && state.playbackAttemptId === attemptId) {
                 showNotification("播放失败，请检查网络连接", "error");
@@ -5742,8 +5739,13 @@ async function playSong(song, options = {}) {
         startTime = 0,
         preserveProgress = false,
         isRetry = false,
+        skipOnFailure = true,
         playbackAttemptId = ++state.playbackAttemptId,
     } = options;
+    const failureChain = options.failureChain instanceof Set
+        ? options.failureChain
+        : new Set();
+    state.playbackFailureChain = failureChain;
 
     window.clearTimeout(pendingPaletteTimer);
     state.audioReadyForPalette = false;
@@ -5888,8 +5890,8 @@ async function playSong(song, options = {}) {
                 playbackAttemptId,
             });
         }
-        if (autoplay && shouldSkipPlaybackFailure(error)) {
-            const skipped = await skipFailedTrack(song, error, playbackAttemptId);
+        if (autoplay && skipOnFailure && shouldSkipPlaybackFailure(error)) {
+            const skipped = await skipFailedTrack(song, error, playbackAttemptId, failureChain);
             if (skipped) {
                 return;
             }
@@ -6118,7 +6120,7 @@ async function playOnlineSong(index) {
         renderPlaylist();
         updatePlaylistActionStates();
         
-        // 可选：如果希望继续高亮“探索雷达”中的项，保留对 updateOnlineHighlight 的调用
+        // 在线结果会被并入统一播放队列，避免出现两套高亮状态。
         // updateOnlineHighlight();
     } catch (error) {
         console.error("播放失败:", error);
@@ -6137,137 +6139,6 @@ function updateOnlineHighlight() {
             item.classList.remove("current");
         }
     });
-}
-
-const EXPLORE_RADAR_GENRES = [
-    "流行",
-    "摇滚",
-    "古典音乐",
-    "民谣",
-    "电子",
-    "爵士",
-    "说唱",
-    "乡村",
-    "蓝调",
-    "R&B",
-    "金属",
-    "嘻哈",
-    "轻音乐",
-];
-
-function pickRandomExploreGenre() {
-    const genres = (state.radarSettings && state.radarSettings.genres && state.radarSettings.genres.length > 0)
-        ? state.radarSettings.genres
-        : EXPLORE_RADAR_GENRES;
-    
-    const index = Math.floor(Math.random() * genres.length);
-    return genres[index];
-}
-
-const EXPLORE_RADAR_SOURCES = ["netease", "kuwo"];
-
-function pickRandomExploreSource() {
-    if (!Array.isArray(EXPLORE_RADAR_SOURCES) || EXPLORE_RADAR_SOURCES.length === 0) {
-        return "netease";
-    }
-    const index = Math.floor(Math.random() * EXPLORE_RADAR_SOURCES.length);
-    return EXPLORE_RADAR_SOURCES[index];
-}
-
-// 探索雷达：通过代理后端随机搜歌并刷新播放列表
-async function exploreOnlineMusic() {
-    const desktopButton = dom.loadOnlineBtn;
-    const mobileButton = dom.mobileExploreButton;
-    const btnText = desktopButton ? desktopButton.querySelector(".btn-text") : null;
-    const loader = desktopButton ? desktopButton.querySelector(".loader") : null;
-
-    const setLoadingState = (isLoading) => {
-        if (desktopButton) {
-            desktopButton.disabled = isLoading;
-            desktopButton.classList.toggle("is-loading", Boolean(isLoading));
-            if (btnText) {
-                btnText.style.display = isLoading ? "none" : "";
-            }
-            if (loader) {
-                loader.style.display = isLoading ? "inline-flex" : "none";
-            }
-        }
-        if (mobileButton) {
-            mobileButton.disabled = isLoading;
-            mobileButton.setAttribute("aria-disabled", isLoading ? "true" : "false");
-        }
-    };
-
-    try {
-        setLoadingState(true);
-
-        const randomGenre = pickRandomExploreGenre();
-        const source = pickRandomExploreSource();
-        const results = await API.search(randomGenre, source, 30, 1);
-
-        if (!Array.isArray(results) || results.length === 0) {
-            showNotification("探索雷达：未找到歌曲", "error");
-            debugLog(`探索雷达未找到歌曲，关键词：${randomGenre}，音源：${source}`);
-            return;
-        }
-
-        const normalizedSongs = results.map((song) => ({
-            id: song.id,
-            name: song.name,
-            artist: Array.isArray(song.artist) ? song.artist.join(" / ") : (song.artist || "未知艺术家"),
-            album: song.album || "",
-            source: song.source || source,
-            lyric_id: song.lyric_id || song.id,
-            pic_id: song.pic_id || song.pic || "",
-            url_id: song.url_id,
-        }));
-
-        const existingSongs = Array.isArray(state.playlistSongs) ? state.playlistSongs.slice() : [];
-        const existingKeys = new Set(existingSongs
-            .map((song) => getSongKey(song))
-            .filter((key) => typeof key === "string" && key.length > 0));
-
-        const appendedSongs = [];
-        for (const song of normalizedSongs) {
-            const key = getSongKey(song);
-            if (key && existingKeys.has(key)) {
-                continue;
-            }
-            appendedSongs.push(song);
-            if (key) {
-                existingKeys.add(key);
-            }
-        }
-
-        if (appendedSongs.length === 0) {
-            showNotification("探索雷达：本次未找到新的歌曲，当前列表已包含这些曲目", "info");
-            debugLog(`探索雷达无新增歌曲，关键词：${randomGenre}`);
-            return;
-        }
-
-        state.playlistSongs = existingSongs.concat(appendedSongs);
-        state.onlineSongs = state.playlistSongs.slice();
-        state.currentPlaylist = "playlist";
-        state.currentList = "playlist";
-
-        renderPlaylist();
-        updatePlaylistHighlight();
-
-        showNotification(`探索雷达：新增${appendedSongs.length}首 ${randomGenre} 歌曲`);
-        debugLog(`探索雷达加载成功，关键词：${randomGenre}，音源：${source}，新增歌曲数：${appendedSongs.length}`);
-
-        const shouldAutoplay = existingSongs.length === 0 && state.playlistSongs.length > 0;
-        if (shouldAutoplay) {
-            await playPlaylistSong(0);
-        } else {
-            savePlayerState();
-        }
-    } catch (error) {
-        console.error("探索雷达错误:", error);
-        showNotification("探索雷达获取失败，请稍后重试", "error");
-    } finally {
-        setLoadingState(false);
-    }
 }
 
 // 修复：加载歌词
@@ -6304,74 +6175,66 @@ async function loadLyrics(song) {
 
 // 修复：解析歌词
 function parseLyrics(lyricText) {
-    const lines = lyricText.split('\n');
+    const lines = String(lyricText || "").split(/\r?\n/);
     const lyrics = [];
 
     lines.forEach(line => {
-        const match = line.match(/\[(\d{2}):(\d{2})\.(\d{2,3})\](.*)/);
-        if (match) {
-            const minutes = parseInt(match[1]);
-            const seconds = parseInt(match[2]);
-            const milliseconds = parseInt(match[3].padEnd(3, '0'));
-            const time = minutes * 60 + seconds + milliseconds / 1000;
-            const text = match[4].trim();
-
-            if (text) {
-                lyrics.push({ time, text });
-            }
+        const tags = Array.from(line.matchAll(/\[(\d{1,3}):(\d{2})(?:[.:](\d{1,3}))?\]/g));
+        if (tags.length === 0) {
+            return;
         }
+
+        const text = line.replace(/\[(\d{1,3}):(\d{2})(?:[.:](\d{1,3}))?\]/g, "").trim();
+        if (!text) {
+            return;
+        }
+
+        tags.forEach((match) => {
+            const minutes = Number.parseInt(match[1], 10);
+            const seconds = Number.parseInt(match[2], 10);
+            const fraction = match[3] ? Number.parseInt(match[3], 10) : 0;
+            const milliseconds = match[3] && match[3].length === 2 ? fraction * 10 : fraction;
+            const time = minutes * 60 + seconds + milliseconds / 1000;
+            lyrics.push({ time, text });
+        });
     });
 
-    state.lyricsData = lyrics.sort((a, b) => a.time - b.time);
+    const deduplicatedLyrics = lyrics
+        .sort((a, b) => a.time - b.time)
+        .filter((lyric, index, items) => {
+            const previous = items[index - 1];
+            return !previous || previous.time !== lyric.time || previous.text !== lyric.text;
+        });
+
+    state.lyricsData = deduplicatedLyrics;
     displayLyrics();
     debugLog(`解析歌词完成: ${state.lyricsData.length} 行`);
 }
 
-function setLyricsContentHtml(html) {
-    if (dom.lyricsContent) {
-        dom.lyricsContent.innerHTML = html;
-    }
-    if (dom.mobileInlineLyricsContent) {
-        dom.mobileInlineLyricsContent.innerHTML = html;
-    }
+function createLyricElement(lyric, index) {
+    const element = document.createElement("div");
+    element.dataset.time = String(lyric.time);
+    element.dataset.index = String(index);
+    element.textContent = lyric.text;
+    return element;
 }
 
-function clearLyricsContent() {
-    setLyricsContentHtml("");
-    state.lyricsData = [];
-    state.currentLyricLine = -1;
-    if (isMobileView) {
-        closeMobileInlineLyrics({ force: true });
-    }
-}
-
-function clearLyricsIfLibraryEmpty() {
-    const playlistEmpty = !Array.isArray(state.playlistSongs) || state.playlistSongs.length === 0;
-    const favoritesEmpty = !Array.isArray(state.favoriteSongs) || state.favoriteSongs.length === 0;
-    if (!playlistEmpty || !favoritesEmpty) {
+function renderLyricsInto(container) {
+    if (!container) {
         return;
     }
-
-    const player = dom.audioPlayer;
-    const hasActiveAudio = Boolean(player && player.src && !player.ended && !player.paused);
-    if (hasActiveAudio) {
-        return;
-    }
-
-    clearLyricsContent();
-    if (dom.lyrics) {
-        dom.lyrics.classList.add("empty");
-        dom.lyrics.dataset.placeholder = "default";
-    }
+    const fragment = document.createDocumentFragment();
+    state.lyricsData.forEach((lyric, index) => {
+        fragment.appendChild(createLyricElement(lyric, index));
+    });
+    container.replaceChildren(fragment);
 }
 
-// 修复：显示歌词
 function displayLyrics() {
-    const lyricsHtml = state.lyricsData.map((lyric, index) =>
-        `<div data-time="${lyric.time}" data-index="${index}">${lyric.text}</div>`
-    ).join("");
-    setLyricsContentHtml(lyricsHtml);
+    renderLyricsInto(dom.lyricsContent);
+    renderLyricsInto(dom.mobileInlineLyricsContent);
     if (dom.lyrics) {
+        dom.lyrics.classList.toggle("empty", state.lyricsData.length === 0);
         dom.lyrics.dataset.placeholder = "default";
     }
     if (state.isMobileInlineLyricsOpen) {
@@ -6379,7 +6242,7 @@ function displayLyrics() {
     }
 }
 
-// 修复：同步歌词
+// 新增：同步歌词
 function syncLyrics() {
     if (state.lyricsData.length === 0) return;
 
@@ -6414,17 +6277,50 @@ function syncLyrics() {
 
         lyricTargets.forEach(({ elements, container, inline }) => {
             elements.forEach((element, index) => {
-                if (index === currentIndex) {
-                    element.classList.add("current");
-                    const shouldScroll = !state.userScrolledLyrics && (!inline || state.isMobileInlineLyricsOpen);
-                    if (shouldScroll) {
-                        scrollToCurrentLyric(element, container);
-                    }
-                } else {
-                    element.classList.remove("current");
+                const isCurrent = index === currentIndex;
+                element.classList.toggle("current", isCurrent);
+                const shouldScroll = isCurrent && !state.userScrolledLyrics && (!inline || state.isMobileInlineLyricsOpen);
+                if (shouldScroll) {
+                    scrollToCurrentLyric(element, container);
                 }
             });
         });
+    }
+}
+
+function setLyricsContentHtml(html) {
+    if (dom.lyricsContent) {
+        dom.lyricsContent.innerHTML = html;
+    }
+    if (dom.mobileInlineLyricsContent) {
+        dom.mobileInlineLyricsContent.innerHTML = html;
+    }
+}
+
+function clearLyricsContent() {
+    setLyricsContentHtml("");
+    state.lyricsData = [];
+    state.currentLyricLine = -1;
+    if (dom.lyrics) {
+        dom.lyrics.classList.add("empty");
+        dom.lyrics.dataset.placeholder = "default";
+    }
+    if (isMobileView) {
+        closeMobileInlineLyrics({ force: true });
+    }
+}
+
+function clearLyricsIfLibraryEmpty() {
+    const playlistEmpty = !Array.isArray(state.playlistSongs) || state.playlistSongs.length === 0;
+    const favoritesEmpty = !Array.isArray(state.favoriteSongs) || state.favoriteSongs.length === 0;
+    if (!playlistEmpty || !favoritesEmpty) {
+        return;
+    }
+
+    const player = dom.audioPlayer;
+    const hasActiveAudio = Boolean(player && player.src && !player.ended && !player.paused);
+    if (!hasActiveAudio) {
+        clearLyricsContent();
     }
 }
 
@@ -6552,141 +6448,3 @@ function showNotification(message, type = "success") {
         notification.classList.remove("show");
     }, 3000);
 }
-
-// --- 设置与探索雷达自定义 ---
-
-function initSettings() {
-    // 渲染风格列表
-    renderGenreList();
-
-    // 绑定 Logo 双击事件
-    if (dom.logo) {
-        dom.logo.addEventListener("dblclick", openSettingsModal);
-    }
-    
-    // 移动端双击标题或图标打开设置 (优化移动端双击兼容性)
-    let lastToolbarClick = 0;
-    const handleDoubleTap = (e) => {
-        const now = Date.now();
-        if (now - lastToolbarClick < 300) {
-            e.preventDefault();
-            openSettingsModal();
-        }
-        lastToolbarClick = now;
-    };
-
-    if (dom.mobileToolbarTitle) {
-        dom.mobileToolbarTitle.addEventListener("click", handleDoubleTap);
-    }
-
-    // 绑定按钮事件
-    if (dom.closeSettingsBtn) {
-        dom.closeSettingsBtn.addEventListener("click", closeSettingsModal);
-    }
-    if (dom.saveSettingsBtn) {
-        dom.saveSettingsBtn.addEventListener("click", saveSettings);
-    }
-    // 绑定齿轮图标按钮
-    const openBtn = dom.openSettingsBtn || document.getElementById("openSettingsBtn");
-    if (openBtn) {
-        openBtn.addEventListener("click", openSettingsModal);
-    }
-    if (dom.settingsModal) {
-        dom.settingsModal.addEventListener("click", (e) => {
-            if (e.target === dom.settingsModal) closeSettingsModal();
-        });
-    }
-
-    // 加载设置
-    loadSettings();
-}
-
-function renderGenreList() {
-    if (!dom.radarGenreList) return;
-    
-    dom.radarGenreList.innerHTML = EXPLORE_RADAR_GENRES.map(genre => `
-        <div class="genre-item">
-            <input type="checkbox" id="genre-${genre}" value="${genre}" checked>
-            <label for="genre-${genre}" class="genre-label">${genre}</label>
-        </div>
-    `).join("");
-}
-
-function openSettingsModal() {
-    if (dom.settingsModal) {
-        dom.settingsModal.classList.add("show");
-        dom.settingsModal.setAttribute("aria-hidden", "false");
-    }
-}
-
-function closeSettingsModal() {
-    if (dom.settingsModal) {
-        dom.settingsModal.classList.remove("show");
-        dom.settingsModal.setAttribute("aria-hidden", "true");
-    }
-}
-
-async function saveSettings() {
-    const selectedGenres = Array.from(dom.radarGenreList.querySelectorAll("input:checked")).map(cb => cb.value);
-    
-    if (selectedGenres.length === 0) {
-        showNotification("请至少选择一个风格", "warning");
-        return;
-    }
-
-    state.radarSettings = {
-        genres: selectedGenres
-    };
-
-    // 本地保存
-    safeSetLocalStorage("radarSettings", JSON.stringify(state.radarSettings));
-
-    // 云同步会自动被 STORAGE_KEYS_TO_SYNC 机制处理，但我们这里手动触发一次以确保即时性
-    if (typeof persistStorageItems === "function") {
-        persistStorageItems({
-            radarSettings: JSON.stringify(state.radarSettings)
-        });
-    }
-
-    showNotification("设置已保存", "success");
-    closeSettingsModal();
-}
-
-async function loadSettings() {
-    // 1. 从本地加载 (作为兜底)
-    let localSettings = safeGetLocalStorage("radarSettings");
-    if (localSettings) {
-        try {
-            state.radarSettings = JSON.parse(localSettings);
-            applySettingsToUI();
-        } catch (e) {
-            console.error("解析本地设置失败:", e);
-        }
-    }
-    // 注意：云端加载已在 bootstrapPersistentStorage 中统一处理
-}
-
-function applySettingsToUI() {
-    if (!state.radarSettings || !state.radarSettings.genres || !dom.radarGenreList) return;
-    
-    const checkboxes = dom.radarGenreList.querySelectorAll("input[type='checkbox']");
-    checkboxes.forEach(cb => {
-        cb.checked = state.radarSettings.genres.includes(cb.value);
-    });
-}
-
-// 在 bootstrapPersistentStorage 之后或期间初始化设置
-(function() {
-    const originalBootstrap = bootstrapPersistentStorage;
-    bootstrapPersistentStorage = async function() {
-        await originalBootstrap();
-        initSettings();
-    };
-})();
-
-// 如果页面没有启用云同步，也要初始化设置
-document.addEventListener("DOMContentLoaded", () => {
-    if (!remoteSyncEnabled) {
-        initSettings();
-    }
-});
