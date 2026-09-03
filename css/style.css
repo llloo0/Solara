@@ -308,6 +308,60 @@ body.background-transitioning .background-stage__layer--transition {
     background: var(--panel);
 }
 
+.search-expand-btn {
+    width: 100%;
+    min-height: 48px;
+    padding: 0 16px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    border: 1px solid var(--panel-line);
+    background: var(--panel);
+    color: var(--muted-strong);
+    cursor: pointer;
+    font-size: 13px;
+    text-align: left;
+    transition: border-color 180ms ease, color 180ms ease, background 180ms ease;
+}
+
+.search-expand-btn i:first-child {
+    color: var(--cyan);
+}
+
+.search-expand-btn span {
+    margin-right: auto;
+}
+
+.search-expand-btn i:last-child {
+    color: var(--muted);
+    font-size: 11px;
+}
+
+.search-expand-btn:hover {
+    border-color: var(--cyan);
+    color: var(--text);
+    background: var(--panel-strong);
+}
+
+.search-area.is-expanded {
+    padding: 20px 22px 18px;
+}
+
+.search-area.is-expanded .search-expand-btn {
+    display: none;
+}
+
+.search-area:not(.is-expanded) {
+    padding: 0;
+    border-color: transparent;
+    background: transparent;
+}
+
+.search-area:not(.is-expanded) > :not(.search-expand-btn) {
+    display: none !important;
+}
+
 .search-heading {
     display: flex;
     align-items: flex-start;
@@ -372,6 +426,11 @@ body.background-transitioning .background-stage__layer--transition {
     background: transparent;
     color: var(--text);
     font-size: 15px;
+}
+
+.search-input-wrapper .search-input:focus-visible {
+    outline: 0;
+    outline-offset: 0;
 }
 
 .search-input::placeholder {

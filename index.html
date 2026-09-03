@@ -57,6 +57,11 @@
         </header>
 
         <section class="search-area" id="searchArea" aria-label="搜索音乐">
+            <button type="button" class="search-expand-btn" id="searchExpandBtn" aria-expanded="false" aria-controls="searchControls">
+                <i class="fas fa-magnifying-glass" aria-hidden="true"></i>
+                <span>搜索音乐</span>
+                <i class="fas fa-arrow-right" aria-hidden="true"></i>
+            </button>
             <div class="search-heading">
                 <div>
                     <span class="eyebrow">FIND YOUR NEXT TRACK</span>
@@ -66,7 +71,7 @@
                     <i class="fas fa-times" aria-hidden="true"></i>
                 </button>
             </div>
-            <div class="search-controls-wrapper">
+            <div class="search-controls-wrapper" id="searchControls">
                 <div class="search-bar-unified">
                     <div class="search-input-wrapper">
                         <i class="fas fa-magnifying-glass search-icon" aria-hidden="true"></i>

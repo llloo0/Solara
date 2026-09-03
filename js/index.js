@@ -68,6 +68,7 @@ const dom = {
     mobileQueueToggle: document.getElementById("mobileQueueToggle"),
     shuffleToggleBtn: document.getElementById("shuffleToggleBtn"),
     searchArea: document.getElementById("searchArea"),
+    searchExpandBtn: document.getElementById("searchExpandBtn"),
     libraryTabs: Array.from(document.querySelectorAll(".playlist-tab[data-target]")),
     addAllFavoritesBtn: document.getElementById("addAllFavoritesBtn"),
     importFavoritesBtn: document.getElementById("importFavoritesBtn"),
@@ -191,6 +192,9 @@ function forceCloseMobileSearchOverlay() {
         return;
     }
     document.body.classList.remove("mobile-search-open");
+    if (typeof window.collapseSearchArea === "function") {
+        window.collapseSearchArea();
+    }
     if (dom.searchInput) {
         dom.searchInput.blur();
     }
@@ -2295,6 +2299,12 @@ document.addEventListener("keydown", (e) => {
 // 新增：切换搜索模式
 function toggleSearchMode(enable) {
     state.isSearchMode = enable;
+    if (dom.searchArea) {
+        dom.searchArea.classList.toggle("is-expanded", enable);
+    }
+    if (dom.searchExpandBtn) {
+        dom.searchExpandBtn.setAttribute("aria-expanded", enable ? "true" : "false");
+    }
     if (enable) {
         dom.container.classList.add("search-mode");
         debugLog("进入搜索模式");
@@ -2303,6 +2313,38 @@ function toggleSearchMode(enable) {
         debugLog("退出搜索模式");
     }
 }
+
+function expandSearchArea({ focus = true } = {}) {
+    if (!dom.searchArea) {
+        return;
+    }
+
+    dom.searchArea.classList.add("is-expanded");
+    if (dom.searchExpandBtn) {
+        dom.searchExpandBtn.setAttribute("aria-expanded", "true");
+    }
+
+    if (focus && dom.searchInput) {
+        window.requestAnimationFrame(() => {
+            dom.searchInput.focus();
+        });
+    }
+}
+
+function collapseSearchArea() {
+    if (!dom.searchArea || state.isSearchMode) {
+        return;
+    }
+
+    dom.searchArea.classList.remove("is-expanded");
+    if (dom.searchExpandBtn) {
+        dom.searchExpandBtn.setAttribute("aria-expanded", "false");
+    }
+}
+
+window.toggleSearchMode = toggleSearchMode;
+window.expandSearchArea = expandSearchArea;
+window.collapseSearchArea = collapseSearchArea;
 
 // 新增：显示搜索结果
 function showSearchResults(options = {}) {
@@ -3719,6 +3761,14 @@ function setupInteractions() {
     }
 
     // 搜索相关事件 - 修复搜索下拉框显示问题
+    if (dom.searchExpandBtn) {
+        dom.searchExpandBtn.addEventListener("click", (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            expandSearchArea();
+        });
+    }
+
     dom.searchBtn.addEventListener("click", (e) => {
         e.preventDefault();
         e.stopPropagation();
@@ -3742,12 +3792,22 @@ function setupInteractions() {
 
     updateImportSelectedButton();
 
-    // 修复：点击搜索区域外部时隐藏搜索结果
+    // 修复：点击搜索区域外部时隐藏搜索结果并收起搜索区
     document.addEventListener("click", (e) => {
         const searchArea = document.querySelector(".search-area");
-        if (searchArea && !searchArea.contains(e.target) && state.isSearchMode) {
-            debugLog("点击搜索区域外部，隐藏搜索结果");
-            hideSearchResults();
+        const mobileSearchOpen = isMobileView &&
+            document.body?.classList.contains("mobile-search-open");
+        if (mobileSearchOpen) {
+            return;
+        }
+        if (searchArea && !searchArea.contains(e.target) &&
+            (state.isSearchMode || searchArea.classList.contains("is-expanded"))) {
+            debugLog("点击搜索区域外部，隐藏搜索结果并收起搜索区");
+            if (state.isSearchMode) {
+                hideSearchResults();
+            } else {
+                collapseSearchArea();
+            }
         }
     });
 

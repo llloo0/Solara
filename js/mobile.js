@@ -33,6 +33,11 @@
         }
         document.body.classList.add("mobile-search-open");
         document.body.classList.remove("mobile-panel-open");
+        if (typeof window.expandSearchArea === "function") {
+            window.expandSearchArea({ focus: false });
+        } else if (dom.searchArea) {
+            dom.searchArea.classList.add("is-expanded");
+        }
         if (dom.searchArea) {
             dom.searchArea.setAttribute("aria-hidden", "false");
         }
@@ -58,6 +63,8 @@
             toggleSearchMode(false);
         } else if (typeof window.hideSearchResults === "function") {
             window.hideSearchResults();
+        } else if (dom.searchArea) {
+            dom.searchArea.classList.remove("is-expanded");
         }
         if (dom.searchArea) {
             dom.searchArea.setAttribute("aria-hidden", "true");
