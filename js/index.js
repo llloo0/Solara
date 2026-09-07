@@ -4979,7 +4979,7 @@ function renderPlaylist() {
         const songKey = getSongKey(song) || `playlist-${index}`;
         return `
         <div class="playlist-item" data-index="${index}" role="button" tabindex="0" aria-label="播放 ${song.name}" data-favorite-key="${songKey}">
-            ${song.name} - ${artistValue}
+            <div class="playlist-item-label">${song.name} - ${artistValue}</div>
             <button class="playlist-item-favorite favorite-toggle" type="button" data-playlist-action="favorite" data-index="${index}" data-favorite-key="${songKey}" title="收藏" aria-label="收藏">
                 <i class="fa-regular fa-heart"></i>
             </button>
@@ -5243,7 +5243,7 @@ function renderFavorites() {
         const songKey = getSongKey(song) || `favorite-${index}`;
         return `
         <div class="playlist-item${isCurrent ? " current" : ""}" data-index="${index}" role="button" tabindex="0" aria-label="播放 ${song.name}" data-favorite-key="${songKey}">
-            ${song.name} - ${artistValue}
+            <div class="playlist-item-label">${song.name} - ${artistValue}</div>
             <button class="favorite-item-action favorite-item-action--add" type="button" data-favorite-action="add" data-index="${index}" title="添加到播放列表" aria-label="添加到播放列表">
                 <i class="fas fa-plus"></i>
             </button>
