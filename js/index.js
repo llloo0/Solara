@@ -28,6 +28,7 @@ const dom = {
     albumCover: document.getElementById("albumCover"),
     currentSongTitle: document.getElementById("currentSongTitle"),
     currentSongArtist: document.getElementById("currentSongArtist"),
+    lyricsTitle: document.getElementById("lyricsTitle"),
     debugInfo: document.getElementById("debugInfo"),
     importSelectedBtn: document.getElementById("importSelectedBtn"),
     importSelectedCount: document.getElementById("importSelectedCount"),
@@ -937,6 +938,16 @@ const state = {
 
 let importSelectedMenuOutsideHandler = null;
 
+const DEFAULT_LYRICS_TITLE = "选择一首歌曲开始播放";
+
+function updateLyricsTitle(song = state.currentSong) {
+    if (!dom.lyricsTitle) {
+        return;
+    }
+    const title = typeof song?.name === "string" ? song.name.trim() : "";
+    dom.lyricsTitle.textContent = title || DEFAULT_LYRICS_TITLE;
+}
+
 /**
  * 状态自洽性检查：
  * 如果当前指向的播放列表为空，则清除当前歌曲状态，防止“幽灵播放”
@@ -964,6 +975,7 @@ function validateStateConsistency() {
         // 更新 UI (如果 DOM 已加载)
         if (dom.currentSongTitle) dom.currentSongTitle.textContent = "选择一首歌曲开始播放";
         if (dom.currentSongArtist) dom.currentSongArtist.textContent = "未知艺术家";
+        updateLyricsTitle(null);
         if (typeof showAlbumCoverPlaceholder === "function") showAlbumCoverPlaceholder();
         if (typeof updateMobileToolbarTitle === "function") updateMobileToolbarTitle();
         if (typeof updatePlayPauseButton === "function") updatePlayPauseButton();
@@ -3298,6 +3310,7 @@ async function restoreCurrentSongState() {
         if (dom.currentSongArtist) {
             dom.currentSongArtist.textContent = "未知艺术家";
         }
+        updateLyricsTitle(null);
         if (typeof showAlbumCoverPlaceholder === "function") {
             showAlbumCoverPlaceholder();
         }
@@ -3951,6 +3964,7 @@ function updateCurrentSongInfo(song, options = {}) {
     const { loadArtwork = true } = options;
     state.currentSong = song;
     dom.currentSongTitle.textContent = song.name;
+    updateLyricsTitle(song);
     updateMobileToolbarTitle();
     updateFavoriteIcons();
 
@@ -5113,6 +5127,7 @@ function removeFromPlaylist(index) {
             dom.durationDisplay.textContent = "00:00";
             updateProgressBarBackground(0, 1);
             dom.currentSongTitle.textContent = "选择一首歌曲开始播放";
+            updateLyricsTitle(null);
             updateMobileToolbarTitle();
             dom.currentSongArtist.textContent = "未知艺术家";
             showAlbumCoverPlaceholder();
@@ -5417,6 +5432,7 @@ function clearFavorites() {
         dom.durationDisplay.textContent = "00:00";
         updateProgressBarBackground(0, 1);
         dom.currentSongTitle.textContent = "选择一首歌曲开始播放";
+        updateLyricsTitle(null);
         updateMobileToolbarTitle();
         dom.currentSongArtist.textContent = "未知艺术家";
         showAlbumCoverPlaceholder();
@@ -5599,6 +5615,7 @@ function clearPlaylist() {
     dom.durationDisplay.textContent = "00:00";
     updateProgressBarBackground(0, 1);
     dom.currentSongTitle.textContent = "选择一首歌曲开始播放";
+    updateLyricsTitle(null);
     updateMobileToolbarTitle();
     dom.currentSongArtist.textContent = "未知艺术家";
     showAlbumCoverPlaceholder();
@@ -6423,6 +6440,7 @@ function setLyricsContentHtml(html) {
 
 function clearLyricsContent() {
     setLyricsContentHtml("");
+    updateLyricsTitle();
     state.lyricsData = [];
     state.currentLyricLine = -1;
     if (dom.lyrics) {
