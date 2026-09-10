@@ -1605,7 +1605,7 @@ body.background-transitioning .background-stage__layer--transition {
         grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
         grid-template-areas:
             "progress progress progress"
-            "empty transport trailing";
+            "quality transport volume";
         align-items: center;
         column-gap: 7px;
         row-gap: 8px;
@@ -1627,20 +1627,15 @@ body.background-transitioning .background-stage__layer--transition {
     }
 
     .control-trailing {
-        grid-area: trailing;
-        display: flex;
-        justify-content: flex-start;
-        width: auto;
+        display: contents;
     }
 
     .audio-tools {
-        display: flex;
-        align-items: center;
-        gap: 7px;
+        display: contents;
     }
 
     .player-quality {
-        grid-area: auto;
+        grid-area: quality;
         width: 30px;
     }
 
@@ -1658,7 +1653,7 @@ body.background-transitioning .background-stage__layer--transition {
     }
 
     .volume-container {
-        grid-area: auto;
+        grid-area: volume;
         position: relative;
         width: 30px;
         height: 30px;
