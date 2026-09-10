@@ -40,9 +40,6 @@
         </div>
 
         <header class="header">
-            <div class="brand-lockup">
-                <div class="brand-mark" aria-hidden="true">S</div>
-            </div>
             <div class="header-actions">
                 <button type="button" class="icon-button search-expand-btn" id="searchExpandBtn" aria-expanded="false" aria-controls="searchControls" aria-label="打开搜索" title="搜索">
                     <i class="fas fa-magnifying-glass" aria-hidden="true"></i>
@@ -235,7 +232,9 @@
                         <div id="playerQualityMenu" class="player-quality-menu"></div>
                     </div>
                     <div class="volume-container">
-                        <i id="volumeIcon" class="fas fa-volume-high" aria-hidden="true"></i>
+                        <button id="volumeToggle" class="volume-toggle" type="button" aria-label="显示音量控制" title="显示音量控制" aria-expanded="false">
+                            <i id="volumeIcon" class="fas fa-volume-high" aria-hidden="true"></i>
+                        </button>
                         <input type="range" id="volumeSlider" min="0" max="1" step="0.01" value="0.8" aria-label="音量">
                     </div>
                 </div>

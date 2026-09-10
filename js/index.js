@@ -48,6 +48,8 @@ const dom = {
     durationDisplay: document.getElementById("durationDisplay"),
     volumeSlider: document.getElementById("volumeSlider"),
     volumeIcon: document.getElementById("volumeIcon"),
+    volumeToggle: document.getElementById("volumeToggle"),
+    volumeContainer: document.querySelector(".volume-container"),
     qualityToggle: document.getElementById("qualityToggle"),
     playerQualityMenu: document.getElementById("playerQualityMenu"),
     qualityLabel: document.getElementById("qualityLabel"),
@@ -2691,6 +2693,31 @@ function handleVolumeChange(event) {
     safeSetLocalStorage("playerVolume", String(clamped));
 }
 
+function setMobileVolumeExpanded(expanded) {
+    if (!isMobileView || !dom.volumeContainer) {
+        return;
+    }
+
+    const isExpanded = Boolean(expanded);
+    dom.volumeContainer.classList.toggle("is-expanded", isExpanded);
+
+    if (dom.volumeToggle) {
+        dom.volumeToggle.setAttribute("aria-expanded", isExpanded ? "true" : "false");
+        dom.volumeToggle.setAttribute("aria-label", isExpanded ? "隐藏音量控制" : "显示音量控制");
+        dom.volumeToggle.setAttribute("title", isExpanded ? "隐藏音量控制" : "显示音量控制");
+    }
+}
+
+function toggleMobileVolume(event) {
+    if (!isMobileView || !dom.volumeContainer) {
+        return;
+    }
+
+    event.preventDefault();
+    event.stopPropagation();
+    setMobileVolumeExpanded(!dom.volumeContainer.classList.contains("is-expanded"));
+}
+
 function handleTimeUpdate() {
     const currentTime = dom.audioPlayer.currentTime || 0;
     if (!state.isSeeking) {
@@ -3587,6 +3614,9 @@ function setupInteractions() {
     dom.progressBar.addEventListener("pointerup", handleProgressChange);
 
     dom.volumeSlider.addEventListener("input", handleVolumeChange);
+    if (dom.volumeToggle) {
+        dom.volumeToggle.addEventListener("click", toggleMobileVolume);
+    }
 
     if (dom.sourceSelectButton && dom.sourceMenu) {
         dom.sourceSelectButton.addEventListener("click", toggleSourceMenu);
@@ -3846,6 +3876,12 @@ function setupInteractions() {
             !dom.sourceMenu.contains(e.target) &&
             !dom.sourceSelectButton.contains(e.target)) {
             closeSourceMenu();
+        }
+
+        if (isMobileView &&
+            dom.volumeContainer?.classList.contains("is-expanded") &&
+            !dom.volumeContainer.contains(e.target)) {
+            setMobileVolumeExpanded(false);
         }
     });
 
