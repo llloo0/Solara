@@ -63,8 +63,6 @@ const dom = {
     mobileExportFavoritesBtn: document.getElementById("mobileExportFavoritesBtn"),
     mobileClearFavoritesBtn: document.getElementById("mobileClearFavoritesBtn"),
     mobileOverlayScrim: document.getElementById("mobileOverlayScrim"),
-    mobileQualityToggle: document.getElementById("mobileQualityToggle"),
-    mobileQualityLabel: document.getElementById("mobileQualityLabel"),
     mobilePanel: document.getElementById("mobilePanel"),
     mobileQueueToggle: document.getElementById("mobileQueueToggle"),
     shuffleToggleBtn: document.getElementById("shuffleToggleBtn"),
@@ -2990,9 +2988,6 @@ function resolveQualityAnchor(anchor) {
     if (isElementNode(dom.qualityToggle)) {
         return dom.qualityToggle;
     }
-    if (isElementNode(dom.mobileQualityToggle)) {
-        return dom.mobileQualityToggle;
-    }
     return null;
 }
 
@@ -3020,12 +3015,6 @@ function updateQualityLabel() {
     if (!option) return;
     dom.qualityLabel.textContent = option.label;
     dom.qualityToggle.title = `音质: ${option.label} (${option.description})`;
-    if (dom.mobileQualityLabel) {
-        dom.mobileQualityLabel.textContent = option.label;
-    }
-    if (dom.mobileQualityToggle) {
-        dom.mobileQualityToggle.title = `音质: ${option.label} (${option.description})`;
-    }
 }
 
 function togglePlayerQualityMenu(event) {
@@ -3604,13 +3593,7 @@ function setupInteractions() {
         dom.sourceMenu.addEventListener("click", handleSourceSelection);
     }
     dom.qualityToggle.addEventListener("click", togglePlayerQualityMenu);
-    if (dom.mobileQualityToggle) {
-        dom.mobileQualityToggle.addEventListener("click", togglePlayerQualityMenu);
-    }
     setQualityAnchorState(dom.qualityToggle, false);
-    if (dom.mobileQualityToggle) {
-        setQualityAnchorState(dom.mobileQualityToggle, false);
-    }
     dom.playerQualityMenu.addEventListener("click", handlePlayerQualitySelection);
 
     if (isMobileView && dom.albumCover) {

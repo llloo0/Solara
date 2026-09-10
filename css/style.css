@@ -98,6 +98,10 @@ button {
     color: inherit;
 }
 
+[hidden] {
+    display: none !important;
+}
+
 button:focus-visible,
 input:focus-visible {
     outline: 2px solid var(--cyan);
@@ -182,7 +186,7 @@ body.background-transitioning .background-stage__layer--transition {
 
 .header {
     grid-area: header;
-    min-height: 64px;
+    min-height: 40px;
     display: flex;
     align-items: center;
     justify-content: space-between;
@@ -238,7 +242,7 @@ body.background-transitioning .background-stage__layer--transition {
 }
 
 .header-actions {
-    gap: 18px;
+    gap: 10px;
 }
 
 .header-note,
@@ -439,7 +443,7 @@ body.background-transitioning .background-stage__layer--transition {
 .source-menu,
 .player-quality-menu {
     position: absolute;
-    z-index: 1000;
+    z-index: 1600;
     min-width: 100%;
     border: 1px solid var(--panel-line);
     background: var(--panel-strong);
@@ -889,10 +893,6 @@ body.background-transitioning .background-stage__layer--transition {
 
 .current-favorite-btn.is-active {
     color: var(--accent);
-}
-
-.mobile-quality-chip {
-    display: none;
 }
 
 .mobile-inline-lyrics {
@@ -1594,44 +1594,38 @@ body.background-transitioning .background-stage__layer--transition {
 
     .control-trailing {
         order: 3;
-        justify-content: space-between;
+        justify-content: flex-end;
         width: 100%;
     }
 
     .audio-tools {
-        justify-content: space-between;
-        width: 100%;
+        width: auto;
+        gap: 10px;
     }
 
     .player-quality {
-        width: 145px;
+        width: 112px;
+    }
+
+    .player-quality-btn {
+        height: 30px;
+        padding: 0 8px;
+        font-size: 10px;
     }
 
     .volume-container {
         min-width: 0;
-        flex: 1;
+        flex: 0 1 auto;
+        gap: 8px;
         justify-content: flex-end;
     }
 
+    .volume-container i {
+        font-size: 12px;
+    }
+
     .volume-container input {
-        width: min(32vw, 130px);
-    }
-
-    .mobile-quality-chip {
-        display: inline-flex;
-        align-items: center;
-        gap: 8px;
-        margin-top: 12px;
-        padding: 0;
-        border: 0;
-        background: transparent;
-        color: var(--cyan);
-        cursor: pointer;
-        font-size: 11px;
-    }
-
-    .mobile-quality-chip:hover {
-        color: var(--text);
+        width: min(23vw, 88px);
     }
 
     .mobile-overlay-scrim {
