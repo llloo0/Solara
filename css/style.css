@@ -245,7 +245,7 @@ body.background-transitioning .background-stage__layer--transition {
 
 .header-actions {
     position: absolute;
-    top: 0;
+    top: -9px;
     right: 0;
     gap: 10px;
 }
@@ -306,6 +306,12 @@ body.background-transitioning .background-stage__layer--transition {
 
 .mobile-toolbar {
     display: none;
+}
+
+.mobile-toolbar__actions {
+    display: flex;
+    align-items: center;
+    gap: 7px;
 }
 
 .search-area {
@@ -1409,12 +1415,16 @@ body.background-transitioning .background-stage__layer--transition {
     }
 
     .mobile-toolbar {
+        position: relative;
         min-height: 40px;
         display: flex;
         justify-content: space-between;
     }
 
     .mobile-toolbar__title {
+        position: absolute;
+        left: 50%;
+        transform: translateX(-50%);
         color: var(--text);
         font: 700 18px/1 var(--font-display);
     }
@@ -1592,10 +1602,10 @@ body.background-transitioning .background-stage__layer--transition {
     .controls {
         min-height: 0;
         display: grid;
-        grid-template-columns: minmax(0, 1fr) auto;
+        grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
         grid-template-areas:
-            "progress progress"
-            "transport audio";
+            "progress progress progress"
+            "quality transport volume";
         align-items: center;
         column-gap: 7px;
         row-gap: 8px;
@@ -1606,7 +1616,7 @@ body.background-transitioning .background-stage__layer--transition {
 
     .transport-controls {
         grid-area: transport;
-        justify-content: flex-start;
+        justify-content: center;
         gap: 4px;
         min-width: 0;
     }
@@ -1617,27 +1627,33 @@ body.background-transitioning .background-stage__layer--transition {
     }
 
     .control-trailing {
-        grid-area: audio;
-        justify-content: flex-end;
-        width: auto;
+        display: contents;
     }
 
     .audio-tools {
-        width: auto;
-        gap: 7px;
+        display: contents;
     }
 
     .player-quality {
-        width: 96px;
+        grid-area: quality;
+        width: 30px;
     }
 
     .player-quality-btn {
+        width: 30px;
         height: 30px;
-        padding: 0 8px;
+        padding: 0;
+        justify-content: center;
+        gap: 0;
         font-size: 10px;
     }
 
+    .player-quality-btn span {
+        display: none;
+    }
+
     .volume-container {
+        grid-area: volume;
         position: relative;
         width: 28px;
         height: 30px;

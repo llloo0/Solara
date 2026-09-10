@@ -15,6 +15,7 @@ const dom = {
     mobileInlineLyricsContent: document.getElementById("mobileInlineLyricsContent"),
     audioPlayer: document.getElementById("audioPlayer"),
     themeToggleButton: document.getElementById("themeToggleButton"),
+    mobileThemeToggle: document.getElementById("mobileThemeToggle"),
     showPlaylistBtn: document.getElementById("showPlaylistBtn"),
     showLyricsBtn: document.getElementById("showLyricsBtn"),
     searchInput: document.getElementById("searchInput"),
@@ -3550,10 +3551,15 @@ function setupInteractions() {
             captureThemeDefaults();
         }
         document.body.classList.toggle("dark-mode", isDark);
-        dom.themeToggleButton.classList.toggle("is-dark", isDark);
         const label = isDark ? "切换为浅色模式" : "切换为深色模式";
-        dom.themeToggleButton.setAttribute("aria-label", label);
-        dom.themeToggleButton.setAttribute("title", label);
+        [dom.themeToggleButton, dom.mobileThemeToggle].forEach((button) => {
+            if (!button) {
+                return;
+            }
+            button.classList.toggle("is-dark", isDark);
+            button.setAttribute("aria-label", label);
+            button.setAttribute("title", label);
+        });
         applyDynamicGradient();
     }
 
@@ -3563,10 +3569,15 @@ function setupInteractions() {
     const initialIsDark = savedTheme ? savedTheme === "dark" : prefersDark;
     applyTheme(initialIsDark);
 
-    dom.themeToggleButton.addEventListener("click", () => {
-        const isDark = !document.body.classList.contains("dark-mode");
-        applyTheme(isDark);
-        safeSetLocalStorage("theme", isDark ? "dark" : "light");
+    [dom.themeToggleButton, dom.mobileThemeToggle].forEach((button) => {
+        if (!button) {
+            return;
+        }
+        button.addEventListener("click", () => {
+            const isDark = !document.body.classList.contains("dark-mode");
+            applyTheme(isDark);
+            safeSetLocalStorage("theme", isDark ? "dark" : "light");
+        });
     });
 
     dom.audioPlayer.volume = state.volume;
