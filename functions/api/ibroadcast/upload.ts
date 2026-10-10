@@ -20,6 +20,7 @@ type UploadBody = {
     source?: unknown;
     name?: unknown;
     artist?: unknown;
+    album?: unknown;
   };
 };
 
@@ -42,16 +43,17 @@ function textPart(name: string, value: string, boundary: string): Uint8Array {
 
 function multipartAudioStream(
   audio: ReadableStream<Uint8Array>,
+  filePath: string,
   filename: string,
   contentType: string,
   boundary: string
 ): ReadableStream<Uint8Array> {
   const encoder = new TextEncoder();
   const parts = [
-    textPart("file_path", filename, boundary),
+    textPart("file_path", filePath, boundary),
     textPart("method", CLIENT, boundary),
     encoder.encode(
-      `--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="${filename.replace(/[^\x20-\x7e]/g, "_")}"\r\nContent-Type: ${contentType}\r\n\r\n`
+      `--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="${filename}"\r\nContent-Type: ${contentType}\r\n\r\n`
     ),
   ];
   const reader = audio.getReader();
@@ -157,7 +159,22 @@ export async function onRequestPost({
   const artist = typeof song?.artist === "string"
     ? song.artist
     : Array.isArray(song?.artist)
-      ? song.artist.filter((item): item is string => typeof item === "string").join(", ")
+      ? song.artist.map((item) => {
+          if (typeof item === "string") return item;
+          return item && typeof item === "object" && "name" in item &&
+            typeof item.name === "string"
+            ? item.name
+            : "";
+        }).filter(Boolean).join(", ")
+      : song?.artist && typeof song.artist === "object" && "name" in song.artist &&
+          typeof song.artist.name === "string"
+        ? song.artist.name
+        : "";
+  const album = typeof song?.album === "string"
+    ? song.album
+    : song?.album && typeof song.album === "object" && "name" in song.album &&
+        typeof song.album.name === "string"
+      ? song.album.name
       : "";
   const sourceValue = song?.source ?? song?.platform;
   const source = typeof sourceValue === "string" && sourceValue.trim()
@@ -170,9 +187,10 @@ export async function onRequestPost({
     !name ||
     name.length > 300 ||
     artist.length > 500 ||
+    album.length > 500 ||
     !source ||
     source.length > 100 ||
-    !songKey.startsWith(`${source}:`) ||
+    !songKey.startsWith(`v3:${source}:`) ||
     songKey.length > 500
   ) {
     return json({ error: "Invalid audio URL or song metadata" }, 400);
@@ -217,7 +235,11 @@ export async function onRequestPost({
       return json({ error: `iBroadcast does not support ${extension} files` }, 415);
     }
 
-    const filename = `${[artist, name].filter(Boolean).map(filenamePart).join(" - ") || "track"}${extension}`;
+    const filename = `${filenamePart(name) || "track"}${extension}`;
+    const filePath = [artist, album, filename]
+      .filter(Boolean)
+      .map(multipartField)
+      .join("/");
     const boundary = `----solara${crypto.randomUUID().replace(/-/g, "")}`;
     const token = await getValidIBroadcastToken(env);
     const headers = new Headers({
@@ -231,7 +253,8 @@ export async function onRequestPost({
       headers,
       body: multipartAudioStream(
         upstream.body,
-        multipartField(filename),
+        filePath,
+        filename,
         contentType,
         boundary
       ),

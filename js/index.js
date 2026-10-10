@@ -6108,7 +6108,7 @@ function syncSongToIBroadcast(song, audioUrl, attemptId) {
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({
                     url: audioUrl,
-                    songKey: getPlaybackSongKey(song),
+                    songKey: `v3:${getPlaybackSongKey(song)}`,
                     song: {
                         id: song.id,
                         name: song.name,
