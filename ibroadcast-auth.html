@@ -1,0 +1,176 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="color-scheme" content="light dark">
+    <title>连接 iBroadcast - Solara</title>
+    <style>
+        :root {
+            font-family: Inter, "Noto Sans SC", system-ui, sans-serif;
+            color: #18201f;
+            background: #f4f7f5;
+            font-synthesis: none;
+        }
+        * { box-sizing: border-box; }
+        body {
+            min-height: 100vh;
+            margin: 0;
+            display: grid;
+            place-items: center;
+            padding: 24px;
+        }
+        main {
+            width: min(100%, 460px);
+            padding: 28px;
+            border: 1px solid #d9e2de;
+            border-radius: 8px;
+            background: #fff;
+        }
+        h1 { margin: 0 0 8px; font-size: 24px; }
+        p { color: #52605c; line-height: 1.6; }
+        button, a.action {
+            min-height: 44px;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            border: 0;
+            border-radius: 6px;
+            padding: 0 16px;
+            background: #176b58;
+            color: #fff;
+            font: inherit;
+            font-weight: 600;
+            text-decoration: none;
+            cursor: pointer;
+        }
+        button:disabled { opacity: .55; cursor: wait; }
+        .code {
+            margin: 20px 0;
+            padding: 16px;
+            border: 1px solid #d9e2de;
+            border-radius: 6px;
+            background: #f4f7f5;
+            font-family: ui-monospace, monospace;
+            font-size: 28px;
+            font-weight: 700;
+            letter-spacing: 2px;
+            text-align: center;
+        }
+        [hidden] { display: none !important; }
+        #status { min-height: 26px; margin-bottom: 0; }
+        .secondary { margin-left: 8px; background: #4d5d58; }
+        @media (prefers-color-scheme: dark) {
+            :root { color: #edf4f1; background: #111817; }
+            main { border-color: #35413d; background: #1b2421; }
+            p { color: #b3c0bb; }
+            .code { border-color: #35413d; background: #111817; }
+        }
+    </style>
+</head>
+<body>
+    <main>
+        <h1>连接 iBroadcast</h1>
+        <p>授权完成后，Solara 会将播放的歌曲同步到你的 iBroadcast 资料库。</p>
+        <button id="connect" type="button">开始授权</button>
+        <section id="authorization" hidden aria-live="polite">
+            <p>打开 iBroadcast 授权页面，并输入此设备码：</p>
+            <div class="code" id="userCode"></div>
+            <a class="action" id="verificationLink" target="_blank" rel="noopener noreferrer">打开授权页面</a>
+        </section>
+        <p id="status" role="status">正在检查配置...</p>
+    </main>
+    <script>
+        const connectButton = document.getElementById("connect");
+        const authorization = document.getElementById("authorization");
+        const userCode = document.getElementById("userCode");
+        const verificationLink = document.getElementById("verificationLink");
+        const statusText = document.getElementById("status");
+        let activeSession = null;
+        let pollTimer = null;
+
+        async function requestJson(path, options) {
+            const response = await fetch(path, {
+                credentials: "same-origin",
+                cache: "no-store",
+                ...options,
+                headers: { "Content-Type": "application/json", ...(options?.headers || {}) },
+            });
+            const result = await response.json().catch(() => ({}));
+            if (!response.ok) throw new Error(result.error || `请求失败 (${response.status})`);
+            return result;
+        }
+
+        async function checkStatus() {
+            try {
+                const result = await requestJson("/api/ibroadcast/auth/status");
+                if (!result.configured) {
+                    statusText.textContent = result.error;
+                    connectButton.disabled = true;
+                } else if (result.authorized) {
+                    statusText.textContent = "iBroadcast 已连接。";
+                } else {
+                    statusText.textContent = "尚未连接 iBroadcast。";
+                }
+            } catch (error) {
+                statusText.textContent = error.message;
+            }
+        }
+
+        async function pollAuthorization(intervalSeconds) {
+            if (!activeSession) return;
+            try {
+                const result = await requestJson("/api/ibroadcast/auth/token", {
+                    method: "POST",
+                    body: JSON.stringify({ session_id: activeSession }),
+                });
+                if (result.authorized) {
+                    activeSession = null;
+                    authorization.hidden = true;
+                    connectButton.disabled = false;
+                    statusText.textContent = "授权成功，iBroadcast 已连接。";
+                    return;
+                }
+                statusText.textContent = "等待你在 iBroadcast 完成授权...";
+                pollTimer = setTimeout(() => pollAuthorization(result.interval || intervalSeconds), (result.interval || intervalSeconds) * 1000);
+            } catch (error) {
+                activeSession = null;
+                authorization.hidden = true;
+                connectButton.disabled = false;
+                statusText.textContent = error.message;
+            }
+        }
+
+        connectButton.addEventListener("click", async () => {
+            clearTimeout(pollTimer);
+            connectButton.disabled = true;
+            statusText.textContent = "正在向 iBroadcast 请求设备码...";
+            try {
+                const result = await requestJson("/api/ibroadcast/auth/device", {
+                    method: "POST",
+                    body: "{}",
+                });
+                activeSession = result.session_id;
+                userCode.textContent = result.user_code;
+                const link = new URL(result.verification_uri_complete || result.verification_uri);
+                if (
+                    link.protocol !== "https:" ||
+                    !(link.hostname === "ibroadcast.com" || link.hostname.endsWith(".ibroadcast.com"))
+                ) {
+                    throw new Error("iBroadcast 返回了无效的授权地址");
+                }
+                verificationLink.href = link.toString();
+                authorization.hidden = false;
+                statusText.textContent = "等待你在 iBroadcast 完成授权...";
+                pollTimer = setTimeout(() => pollAuthorization(result.interval), result.interval * 1000);
+            } catch (error) {
+                activeSession = null;
+                connectButton.disabled = false;
+                statusText.textContent = error.message;
+            }
+        });
+
+        checkStatus();
+    </script>
+</body>
+</html>

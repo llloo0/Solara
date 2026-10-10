@@ -58,12 +58,27 @@ services:
       - PASSWORD=your_secure_password_here
       # 音乐聚合 API 地址（当默认 API 被 Cloudflare 屏蔽/Challenge 时，可更换为备用地址）
       - API_BASE_URL=https://music-api.gdstudio.xyz/api.php
+      # 可选：首次授权后自动同步成功播放的歌曲到 iBroadcast
+      # 授权命令：docker compose exec solara npm --prefix /app/server run ibroadcast:auth
+      # - IBROADCAST_TOKEN_FILE=/data/ibroadcast-token.json
       # 界面语言（默认中文，填 ENG 切换为英文）
       # - language=ENG
     volumes:
-      # 持久化 SQLite 数据库（收藏夹和播放记录）
+      # 持久化 SQLite 数据库、播放记录与 iBroadcast 授权令牌
       - ./data:/data
 ```
+
+#### iBroadcast 自动同步
+
+Docker/Node.js 自托管部署首次启动后执行：
+
+```bash
+docker compose exec solara npm --prefix /app/server run ibroadcast:auth
+```
+
+按终端提示访问 iBroadcast 授权页面并输入设备码。授权令牌保存在持久化目录 `./data/ibroadcast-token.json`；之后歌曲在成功开始播放后会由服务器后台下载并上传，已存在于 iBroadcast 的文件会通过 MD5 检查跳过。上传失败不会影响播放。
+
+服务器需能直接访问音乐 API 返回的公网音频地址；上传限制为 100 MB，且音频格式必须是 iBroadcast 账号返回的支持格式。
 
 ---
 
@@ -80,6 +95,15 @@ docker compose up -d
 1. Fork 或克隆本仓库到您自己的 GitHub 账号下。
 2. 登录 Cloudflare 控制台，按照 Cloudflare Pages 文档创建站点，并将本仓库作为构建来源或直接上传静态资源。
 3. 部署完成后，通过 Cloudflare Pages 分配的域名访问站点即可。
+
+#### Cloudflare Pages iBroadcast 自动同步
+
+Pages Functions 会在歌曲开始播放后读取音源、计算 MD5 并上传。音频大小上限为 24 MB；超过限制的歌曲仍可正常播放，但不会同步。个人实例建议同时设置 `PASSWORD` 访问口令，避免他人使用此实例触发你的 iBroadcast 上传。
+
+1. 按上面的 D1 步骤创建并绑定名为 `DB` 的数据库。
+2. 在 Pages 项目的 **Settings → Variables and Secrets** 配置 `IBROADCAST_CLIENT_ID` 和 `IBROADCAST_CLIENT_SECRET`。将 client secret 保存为 Secret；若要用它加密 D1 中的 token，它至少需要 32 个字符。也可额外设置至少 32 个字符的 `IBROADCAST_TOKEN_ENCRYPTION_KEY`，作为独立的 token 加密密钥。
+3. 部署后访问 `/ibroadcast-auth.html`，点击“开始授权”，在 iBroadcast 页面批准设备码。授权 token 与临时设备码均由 Functions 加密保存到 D1；`client_secret` 不会发送到浏览器或 iBroadcast OAuth 请求。
+4. 完成授权后播放歌曲即可自动同步；已存在的歌曲按 MD5 跳过。无需额外修改 Pages 构建命令。
 
 ## ⚙️ 配置提示
 - API 基地址定义在 functions/proxy.ts 中的第1行，可替换为自建接口域名。

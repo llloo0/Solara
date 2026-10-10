@@ -22,6 +22,9 @@ services:
 
       # ── 可选：界面语言（默认中文，填 ENG 切换为英文）─────────────────────
       # - language=ENG
+      # ── 可选：首次授权 iBroadcast 后会自动同步成功播放的歌曲 ──────────────
+      # 授权命令：docker compose exec solara npm --prefix /app/server run ibroadcast:auth
+      # - IBROADCAST_TOKEN_FILE=/data/ibroadcast-token.json
     volumes:
       # 持久化 SQLite 数据库（收藏夹和播放记录跨重启保留）
       - ./data:/data

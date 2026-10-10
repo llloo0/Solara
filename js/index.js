@@ -3610,6 +3610,13 @@ function setupInteractions() {
         state.playbackRequested = true;
         updatePlayPauseButton();
     });
+    dom.audioPlayer.addEventListener("playing", () => {
+        syncSongToIBroadcast(
+            state.currentSong,
+            state.currentOriginalAudioUrl,
+            state.playbackAttemptId
+        );
+    });
     dom.audioPlayer.addEventListener("pause", () => {
         // 媒体错误可能先触发 pause，保留标记让 error 事件继续自动跳歌。
         if (!dom.audioPlayer.error) {
@@ -5927,6 +5934,7 @@ async function playSong(song, options = {}) {
         // 先锁定当前歌曲，音频地址接口失败时也能走统一的自动跳过流程。
         state.currentSong = song;
         state.currentAudioUrl = null;
+        state.currentOriginalAudioUrl = null;
         state.playbackRequested = false;
 
         const quality = state.playbackQuality || '320';
@@ -6016,6 +6024,7 @@ async function playSong(song, options = {}) {
         }
 
         state.currentAudioUrl = selectedAudioUrl;
+        state.currentOriginalAudioUrl = originalAudioUrl;
         state.playbackRequested = autoplay;
 
         if (state.pendingSeekTime != null) {
@@ -6071,6 +6080,177 @@ async function playSong(song, options = {}) {
     } finally {
         savePlayerState();
     }
+}
+
+const ibroadcastSyncAttempts = new Map();
+
+function calculateAudioMd5InWorker(audio) {
+    return new Promise((resolve, reject) => {
+        const worker = new Worker("/js/ibroadcast-upload-worker.js");
+        worker.onmessage = (event) => {
+            worker.terminate();
+            if (event.data?.error) {
+                reject(new Error(event.data.error));
+                return;
+            }
+            resolve(event.data?.md5 || "");
+        };
+        worker.onerror = (event) => {
+            worker.terminate();
+            reject(new Error(event.message || "音频 MD5 计算失败"));
+        };
+        const workerBuffer = audio.buffer.slice(
+            audio.byteOffset,
+            audio.byteOffset + audio.byteLength
+        );
+        worker.postMessage({ bytes: workerBuffer }, [workerBuffer]);
+    });
+}
+
+function syncSongToIBroadcast(song, audioUrl, attemptId) {
+    if (!song || !audioUrl || !song.name) return;
+    const songKey = getPlaybackSongKey(song);
+    if (ibroadcastSyncAttempts.get(songKey) === attemptId) return;
+    ibroadcastSyncAttempts.set(songKey, attemptId);
+    if (ibroadcastSyncAttempts.size > 500) {
+        ibroadcastSyncAttempts.delete(ibroadcastSyncAttempts.keys().next().value);
+    }
+    const isCurrentPlayback = () =>
+        state.currentSong === song && state.playbackAttemptId === attemptId;
+    const releaseAttempt = () => {
+        if (ibroadcastSyncAttempts.get(songKey) === attemptId) {
+            ibroadcastSyncAttempts.delete(songKey);
+        }
+    };
+
+    (async () => {
+        try {
+            const probe = await fetch("/api/ibroadcast/source", { method: "HEAD" });
+            if (!isCurrentPlayback()) {
+                releaseAttempt();
+                return;
+            }
+
+            let response;
+            if (!probe.ok) {
+                response = await fetch('/api/ibroadcast/upload', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        url: audioUrl,
+                        song: {
+                            name: song.name,
+                            artist: song.artist,
+                            album: song.album,
+                            source: song.source,
+                        },
+                    }),
+                });
+                if (!isCurrentPlayback()) return;
+            } else {
+                const sourceUrl = new URL("/api/ibroadcast/source", window.location.origin);
+                sourceUrl.searchParams.set("url", audioUrl);
+                const source = await fetch(sourceUrl.toString(), { credentials: "same-origin" });
+                if (!isCurrentPlayback()) {
+                    source.body?.cancel().catch(() => {});
+                    releaseAttempt();
+                    return;
+                }
+                if (!source.ok || !source.body) {
+                    const sourceError = await source.json().catch(() => ({}));
+                    if (!isCurrentPlayback()) {
+                        releaseAttempt();
+                        return;
+                    }
+                    throw new Error(sourceError.error || `音源读取失败 (${source.status})`);
+                }
+
+                const declaredLength = Number(source.headers.get("Content-Length") || 0);
+                if (declaredLength > 24 * 1024 * 1024) {
+                    await source.body.cancel();
+                    throw new Error("音频超过 Cloudflare Pages 的 24 MB 上传限制");
+                }
+
+                const reader = source.body.getReader();
+                const chunks = [];
+                let totalBytes = 0;
+                while (true) {
+                    const { done, value } = await reader.read();
+                    if (!isCurrentPlayback()) {
+                        reader.cancel().catch(() => {});
+                        releaseAttempt();
+                        return;
+                    }
+                    if (done) break;
+                    totalBytes += value.byteLength;
+                    if (totalBytes > 24 * 1024 * 1024) {
+                        await reader.cancel();
+                        throw new Error("音频超过 Cloudflare Pages 的 24 MB 上传限制");
+                    }
+                    chunks.push(value);
+                }
+                if (!totalBytes) throw new Error("音频内容为空");
+
+                const audio = new Uint8Array(totalBytes);
+                let offset = 0;
+                for (const chunk of chunks) {
+                    audio.set(chunk, offset);
+                    offset += chunk.byteLength;
+                }
+                if (!isCurrentPlayback()) {
+                    releaseAttempt();
+                    return;
+                }
+
+                const digest = await calculateAudioMd5InWorker(audio);
+                if (!isCurrentPlayback()) {
+                    releaseAttempt();
+                    return;
+                }
+                if (!digest) throw new Error("音频 MD5 计算失败");
+
+                response = await fetch("/api/ibroadcast/upload", {
+                    method: "POST",
+                    credentials: "same-origin",
+                    headers: {
+                        "Content-Type": source.headers.get("Content-Type") || "audio/mpeg",
+                        "X-Content-MD5": digest,
+                        "X-Track-Name": encodeURIComponent(String(song.name)),
+                        "X-Track-Artist": encodeURIComponent(String(song.artist || "")),
+                    },
+                    body: audio,
+                });
+                if (!isCurrentPlayback()) return;
+            }
+
+            const result = await response.json().catch(() => ({}));
+            if (!isCurrentPlayback()) return;
+            if (result.disabled) {
+                releaseAttempt();
+                return;
+            }
+            if (!response.ok) {
+                releaseAttempt();
+                debugLog(`iBroadcast同步失败: ${result.error || response.status}`);
+                return;
+            }
+            if (result.duplicate) {
+                debugLog(`iBroadcast已存在，跳过上传: ${song.name}`);
+            } else if (result.uploaded) {
+                debugLog(`已同步到iBroadcast: ${song.name}`);
+            } else {
+                releaseAttempt();
+                debugLog(`iBroadcast未确认上传结果: ${song.name}`);
+            }
+        } catch (error) {
+            if (!isCurrentPlayback()) {
+                releaseAttempt();
+                return;
+            }
+            releaseAttempt();
+            debugLog(`iBroadcast同步失败: ${error instanceof Error ? error.message : error}`);
+        }
+    })();
 }
 
 function scheduleDeferredSongAssets(song, playPromise) {
