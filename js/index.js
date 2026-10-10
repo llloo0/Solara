@@ -6084,29 +6084,6 @@ async function playSong(song, options = {}) {
 
 const ibroadcastSyncAttempts = new Map();
 
-function calculateAudioMd5InWorker(audio) {
-    return new Promise((resolve, reject) => {
-        const worker = new Worker("/js/ibroadcast-upload-worker.js");
-        worker.onmessage = (event) => {
-            worker.terminate();
-            if (event.data?.error) {
-                reject(new Error(event.data.error));
-                return;
-            }
-            resolve(event.data?.md5 || "");
-        };
-        worker.onerror = (event) => {
-            worker.terminate();
-            reject(new Error(event.message || "音频 MD5 计算失败"));
-        };
-        const workerBuffer = audio.buffer.slice(
-            audio.byteOffset,
-            audio.byteOffset + audio.byteLength
-        );
-        worker.postMessage({ bytes: workerBuffer }, [workerBuffer]);
-    });
-}
-
 function syncSongToIBroadcast(song, audioUrl, attemptId) {
     if (!song || !audioUrl || !song.name) return;
     const songKey = getPlaybackSongKey(song);
@@ -6125,102 +6102,25 @@ function syncSongToIBroadcast(song, audioUrl, attemptId) {
 
     (async () => {
         try {
-            const probe = await fetch("/api/ibroadcast/source", { method: "HEAD" });
+            const response = await fetch("/api/ibroadcast/upload", {
+                method: "POST",
+                credentials: "same-origin",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    url: audioUrl,
+                    songKey: getPlaybackSongKey(song),
+                    song: {
+                        id: song.id,
+                        name: song.name,
+                        artist: song.artist,
+                        album: song.album,
+                        source: song.source || song.platform || "netease",
+                    },
+                }),
+            });
             if (!isCurrentPlayback()) {
                 releaseAttempt();
                 return;
-            }
-
-            let response;
-            if (!probe.ok) {
-                response = await fetch('/api/ibroadcast/upload', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        url: audioUrl,
-                        song: {
-                            name: song.name,
-                            artist: song.artist,
-                            album: song.album,
-                            source: song.source,
-                        },
-                    }),
-                });
-                if (!isCurrentPlayback()) return;
-            } else {
-                const sourceUrl = new URL("/api/ibroadcast/source", window.location.origin);
-                sourceUrl.searchParams.set("url", audioUrl);
-                const source = await fetch(sourceUrl.toString(), { credentials: "same-origin" });
-                if (!isCurrentPlayback()) {
-                    source.body?.cancel().catch(() => {});
-                    releaseAttempt();
-                    return;
-                }
-                if (!source.ok || !source.body) {
-                    const sourceError = await source.json().catch(() => ({}));
-                    if (!isCurrentPlayback()) {
-                        releaseAttempt();
-                        return;
-                    }
-                    throw new Error(sourceError.error || `音源读取失败 (${source.status})`);
-                }
-
-                const declaredLength = Number(source.headers.get("Content-Length") || 0);
-                if (declaredLength > 24 * 1024 * 1024) {
-                    await source.body.cancel();
-                    throw new Error("音频超过 Cloudflare Pages 的 24 MB 上传限制");
-                }
-
-                const reader = source.body.getReader();
-                const chunks = [];
-                let totalBytes = 0;
-                while (true) {
-                    const { done, value } = await reader.read();
-                    if (!isCurrentPlayback()) {
-                        reader.cancel().catch(() => {});
-                        releaseAttempt();
-                        return;
-                    }
-                    if (done) break;
-                    totalBytes += value.byteLength;
-                    if (totalBytes > 24 * 1024 * 1024) {
-                        await reader.cancel();
-                        throw new Error("音频超过 Cloudflare Pages 的 24 MB 上传限制");
-                    }
-                    chunks.push(value);
-                }
-                if (!totalBytes) throw new Error("音频内容为空");
-
-                const audio = new Uint8Array(totalBytes);
-                let offset = 0;
-                for (const chunk of chunks) {
-                    audio.set(chunk, offset);
-                    offset += chunk.byteLength;
-                }
-                if (!isCurrentPlayback()) {
-                    releaseAttempt();
-                    return;
-                }
-
-                const digest = await calculateAudioMd5InWorker(audio);
-                if (!isCurrentPlayback()) {
-                    releaseAttempt();
-                    return;
-                }
-                if (!digest) throw new Error("音频 MD5 计算失败");
-
-                response = await fetch("/api/ibroadcast/upload", {
-                    method: "POST",
-                    credentials: "same-origin",
-                    headers: {
-                        "Content-Type": source.headers.get("Content-Type") || "audio/mpeg",
-                        "X-Content-MD5": digest,
-                        "X-Track-Name": encodeURIComponent(String(song.name)),
-                        "X-Track-Artist": encodeURIComponent(String(song.artist || "")),
-                    },
-                    body: audio,
-                });
-                if (!isCurrentPlayback()) return;
             }
 
             const result = await response.json().catch(() => ({}));
@@ -6235,7 +6135,9 @@ function syncSongToIBroadcast(song, audioUrl, attemptId) {
                 return;
             }
             if (result.duplicate) {
-                debugLog(`iBroadcast已存在，跳过上传: ${song.name}`);
+                debugLog(result.knownBySolara
+                    ? `已同步过，跳过上传: ${song.name}`
+                    : `iBroadcast已存在，跳过上传: ${song.name}`);
             } else if (result.uploaded) {
                 debugLog(`已同步到iBroadcast: ${song.name}`);
             } else {

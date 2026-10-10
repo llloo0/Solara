@@ -98,12 +98,12 @@ docker compose up -d
 
 #### Cloudflare Pages iBroadcast 自动同步
 
-Pages Functions 会在歌曲开始播放后读取音源、计算 MD5 并上传。音频大小上限为 24 MB；超过限制的歌曲仍可正常播放，但不会同步。个人实例建议同时设置 `PASSWORD` 访问口令，避免他人使用此实例触发你的 iBroadcast 上传。
+Pages Functions 会在歌曲开始播放后检查 D1 中的同步记录；Solara 已成功同步过的同一来源歌曲会跳过。未记录的歌曲由 Pages Functions 从音源流式转发到 iBroadcast，不在浏览器或 Worker 中缓存整首音频，也不计算音频 MD5。D1 只记录通过 Solara 成功上传的歌曲，因此此前由其他客户端上传到 iBroadcast 的歌曲无法识别，首次可能再次上传。个人实例建议同时设置 `PASSWORD` 访问口令，避免他人使用此实例触发你的 iBroadcast 上传。
 
 1. 按上面的 D1 步骤创建并绑定名为 `DB` 的数据库。
 2. 在 Pages 项目的 **Settings → Variables and Secrets** 配置 `IBROADCAST_CLIENT_ID` 和 `IBROADCAST_CLIENT_SECRET`。将 client secret 保存为 Secret；若要用它加密 D1 中的 token，它至少需要 32 个字符。也可额外设置至少 32 个字符的 `IBROADCAST_TOKEN_ENCRYPTION_KEY`，作为独立的 token 加密密钥。
 3. 部署后访问 `/ibroadcast-auth.html`，点击“开始授权”，在 iBroadcast 页面批准设备码。授权 token 与临时设备码均由 Functions 加密保存到 D1；`client_secret` 不会发送到浏览器或 iBroadcast OAuth 请求。
-4. 完成授权后播放歌曲即可自动同步；已存在的歌曲按 MD5 跳过。无需额外修改 Pages 构建命令。
+4. 完成授权后播放歌曲即可自动同步；iBroadcast 确认上传成功后，歌曲来源和 ID 会记录在 D1 中，同一来源歌曲后续会跳过。无需额外修改 Pages 构建命令。
 
 ## ⚙️ 配置提示
 - API 基地址定义在 functions/proxy.ts 中的第1行，可替换为自建接口域名。

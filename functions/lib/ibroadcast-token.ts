@@ -97,6 +97,14 @@ async function loadToken(env: IBroadcastEnv): Promise<OAuthToken> {
   throw new Error("iBroadcast is not authorized; visit /ibroadcast-auth.html");
 }
 
+export async function getValidIBroadcastToken(env: IBroadcastEnv): Promise<OAuthToken> {
+  let token = await loadToken(env);
+  if (Number(token.expires_at || 0) <= Date.now() / 1000 + 60) {
+    token = await refreshToken(env, token);
+  }
+  return token;
+}
+
 async function refreshToken(env: IBroadcastEnv, token: OAuthToken): Promise<OAuthToken> {
   if (!token.refresh_token) throw new Error("iBroadcast refresh token missing; authorize again");
   const response = await fetch("https://oauth.ibroadcast.com/token", {
@@ -120,8 +128,7 @@ export async function ibroadcastFetch(
   url: string,
   makeInit: () => RequestInit
 ): Promise<Response> {
-  let token = await loadToken(env);
-  if (Number(token.expires_at || 0) <= Date.now() / 1000 + 60) token = await refreshToken(env, token);
+  let token = await getValidIBroadcastToken(env);
   const send = (activeToken: OAuthToken) => {
     const init = makeInit();
     const headers = new Headers(init.headers);

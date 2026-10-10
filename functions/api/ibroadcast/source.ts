@@ -1,4 +1,3 @@
-const MAX_AUDIO_BYTES = 24 * 1024 * 1024;
 const MAX_REDIRECTS = 5;
 
 function jsonError(message: string, status: number): Response {
@@ -38,7 +37,7 @@ function isPublicHost(hostname: string): boolean {
   return true;
 }
 
-function parsePublicUrl(value: string): URL | null {
+export function parsePublicUrl(value: string): URL | null {
   try {
     const url = new URL(value);
     if (
@@ -53,7 +52,7 @@ function parsePublicUrl(value: string): URL | null {
   }
 }
 
-async function fetchPublicAudio(rawUrl: string): Promise<Response> {
+export async function fetchPublicAudio(rawUrl: string): Promise<Response> {
   let url = parsePublicUrl(rawUrl);
   if (!url) throw new Error("Invalid public audio URL");
 
@@ -99,11 +98,6 @@ export async function onRequest(context: {
   try {
     const upstream = await fetchPublicAudio(rawUrl);
     if (!upstream.ok) return jsonError(`Audio source failed (${upstream.status})`, 502);
-    const contentLength = Number(upstream.headers.get("Content-Length") || 0);
-    if (contentLength > MAX_AUDIO_BYTES) {
-      await upstream.body?.cancel();
-      return jsonError("Audio exceeds the 24 MB Pages upload limit", 413);
-    }
     if (!upstream.body) return jsonError("Audio source returned an empty body", 502);
 
     const headers = new Headers({
@@ -111,36 +105,11 @@ export async function onRequest(context: {
       "Cache-Control": "no-store",
       "X-Content-Type-Options": "nosniff",
     });
-    const reader = upstream.body.getReader();
-    let total = 0;
-    const limitedStream = new ReadableStream<Uint8Array>({
-      async pull(controller) {
-        try {
-          const { done, value } = await reader.read();
-          if (done) {
-            controller.close();
-            return;
-          }
-          total += value.byteLength;
-          if (total > MAX_AUDIO_BYTES) {
-            await reader.cancel();
-            controller.error(new Error("Audio exceeds the 24 MB Pages upload limit"));
-            return;
-          }
-          controller.enqueue(value);
-        } catch (error) {
-          controller.error(error);
-        }
-      },
-      cancel(reason) {
-        return reader.cancel(reason);
-      },
-    });
-    return new Response(limitedStream, { status: 200, headers });
+    return new Response(upstream.body, { status: 200, headers });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unable to fetch audio source";
-    return jsonError(message, message.includes("24 MB") ? 413 : 502);
+    return jsonError(message, 502);
   }
 }
 
-export const __test = { MAX_AUDIO_BYTES, isPublicHost, parsePublicUrl };
+export const __test = { isPublicHost, parsePublicUrl };
