@@ -2999,7 +2999,13 @@ function buildQualityMenu() {
             </div>
         `;
     }).join("");
-    dom.playerQualityMenu.innerHTML = optionsHtml;
+    const syncEnabled = safeGetLocalStorage("ibroadcastSyncEnabled") !== "false";
+    dom.playerQualityMenu.innerHTML = `${optionsHtml}
+        <label class="player-quality-setting">
+            <span>同步到 iBroadcast</span>
+            <input id="ibroadcastSyncToggle" type="checkbox" ${syncEnabled ? "checked" : ""}>
+        </label>
+    `;
     if (state.qualityMenuOpen) {
         schedulePlayerQualityMenuPositionUpdate();
     }
@@ -3643,6 +3649,11 @@ function setupInteractions() {
     dom.qualityToggle.addEventListener("click", togglePlayerQualityMenu);
     setQualityAnchorState(dom.qualityToggle, false);
     dom.playerQualityMenu.addEventListener("click", handlePlayerQualitySelection);
+    dom.playerQualityMenu.addEventListener("change", (event) => {
+        if (event.target?.id === "ibroadcastSyncToggle") {
+            safeSetLocalStorage("ibroadcastSyncEnabled", event.target.checked ? "true" : "false");
+        }
+    });
 
     if (isMobileView && dom.albumCover) {
         dom.albumCover.addEventListener("click", () => {
@@ -6085,7 +6096,12 @@ async function playSong(song, options = {}) {
 const ibroadcastSyncAttempts = new Map();
 
 function syncSongToIBroadcast(song, audioUrl, attemptId) {
-    if (!song || !audioUrl || !song.name) return;
+    if (
+        safeGetLocalStorage("ibroadcastSyncEnabled") === "false" ||
+        !song ||
+        !audioUrl ||
+        !song.name
+    ) return;
     const songKey = getPlaybackSongKey(song);
     if (ibroadcastSyncAttempts.get(songKey) === attemptId) return;
     ibroadcastSyncAttempts.set(songKey, attemptId);

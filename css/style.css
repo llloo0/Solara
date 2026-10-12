@@ -513,6 +513,27 @@ body.background-transitioning .background-stage__layer--transition {
     font-size: 10px;
 }
 
+.player-quality-setting {
+    min-height: 44px;
+    padding: 10px 14px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    border-top: 1px solid var(--panel-line);
+    color: var(--muted-strong);
+    font-size: 13px;
+    cursor: pointer;
+}
+
+.player-quality-setting input {
+    width: 16px;
+    height: 16px;
+    margin: 0;
+    accent-color: var(--cyan);
+    cursor: pointer;
+}
+
 .search-btn {
     min-width: 136px;
     height: 48px;
